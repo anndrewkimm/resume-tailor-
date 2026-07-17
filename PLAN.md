@@ -363,13 +363,17 @@ two non-obvious bugs already hit and fixed so they don't get re-debugged.
 
 ### 8.1 What's already in the repo
 - `resume.tex` — the user's real Overleaf source, pasted in directly.
-- `resume.cls` — **reconstructed**, not the user's original file (they
-  couldn't locate it in Overleaf). It's a from-scratch implementation of the
-  standard "Medium Length Professional CV" template's class file, built to
-  support exactly the commands `resume.tex` uses (`\name`, `\address`,
-  `rSection`, `rSubsection`). It has been test-compiled successfully — see
-  §8.3. If the user later finds their actual original `resume.cls`, that
-  should replace this one (drop-in, same filename).
+- `resume.cls` — **the user's real original file** (2026-07-17), found in
+  their Overleaf project and pasted in, replacing an earlier from-scratch
+  reconstruction that had guessed spacing/font constants. This is the
+  standard LaTeXTemplates.com "Medium Length Professional CV" class by Trey
+  Hunner. Notably, this real class **auto-prints the name/address header** by
+  redefining `\document` itself (see `\renewcommand{\document}` in the class)
+  — it does **not** define or expect `\maketitle`. `resume.tex` has been
+  updated to remove the explicit `\maketitle` call that the old reconstructed
+  class needed (see §8.3, now historical). It also has no `\raggedbottom`,
+  which resolved a prior symptom of trailing blank space at the bottom of the
+  page under the reconstructed class.
 - `backend/requirements.txt`, `backend/app/{__init__.py, config.py,
   security.py, latex_compile.py, main.py}` — a partial FastAPI scaffold
   covering config loading, the origin/secret check from §3.2, the LaTeX
@@ -401,33 +405,25 @@ two non-obvious bugs already hit and fixed so they don't get re-debugged.
   Don't re-pin these to older versions without checking wheel availability
   for whatever Python version is actually installed.
 
-### 8.3 LaTeX bug already found and fixed
-The original `resume.tex` never calls `\maketitle` — the name/contact header
-is presumably rendered automatically by the user's real (missing)
-`resume.cls`. Two approaches were tried for the reconstructed class:
-1. Auto-invoke via `\AtBeginDocument{\maketitle}` in the class — **broke the
-   build** (`Undefined control sequence \hyper@linkurl` right at
-   `\begin{document}`), because this hook fires before `hyperref` (loaded in
-   `resume.tex`'s own preamble, after `\documentclass{resume}`) finishes its
-   own `\AtBeginDocument` setup, leaving `\href` half-initialized. A
-   double-nested `\AtBeginDocument{\AtBeginDocument{\maketitle}}` trick was
-   also tried and did not reliably fix the ordering either.
-2. **What actually works and is now in place**: `resume.cls` just defines
-   `\maketitle` normally (no auto-hook), and `resume.tex` calls `\maketitle`
-   explicitly on its own line right after `\begin{document}`. This is the
-   standard, unsurprising way LaTeX resume templates do this and avoids the
-   hook-ordering fragility entirely. If the user's real original
-   `resume.cls` is ever substituted in and turns out to auto-invoke the
-   header itself, the explicit `\maketitle` call in `resume.tex` would need
-   to be removed to avoid a doubled header — check the compiled PDF for a
-   duplicate name/contact block if that swap happens.
+### 8.3 LaTeX bug already found and fixed (historical — reconstructed-class era)
+This section describes a workaround that no longer applies now that the
+user's real `resume.cls` is in place (§8.1), kept for history. With the
+earlier from-scratch reconstructed class, `resume.tex` needed an explicit
+`\maketitle` call because that class defined `\maketitle` normally rather
+than auto-invoking it. Auto-invoking via `\AtBeginDocument{\maketitle}` had
+broken the build (`Undefined control sequence \hyper@linkurl`) due to a hook
+ordering conflict with `hyperref`. That whole problem is moot now: the real
+class hooks `\document` directly instead of using `\AtBeginDocument`, so it
+doesn't hit the same ordering conflict, and `resume.tex` no longer calls
+`\maketitle` at all (removed 2026-07-17).
 
-### 8.4 Verification status — CONFIRMED
-Re-compiled after the §8.3 fix and rendered to PNG: the name/contact header
-now appears exactly once, with Education, Technologies, Experience, and
-Projects all matching the user's reference PDF. No `hyperref` errors in the
-log. `resume.cls` and the explicit `\maketitle` line in `resume.tex` are
-correct as committed — no further LaTeX-toolchain work needed here.
+### 8.4 Verification status — CONFIRMED (updated 2026-07-17)
+Re-compiled with the real `resume.cls` and the `\maketitle` call removed from
+`resume.tex`; rendered to PNG. The name/contact header appears exactly once,
+Education/Technologies/Experience/Projects all render correctly, single page,
+no trailing blank space at the bottom. Two harmless "Overfull \hbox" warnings
+in the log (name centering line, technologies table) — not errors, no visual
+overflow observed. No further LaTeX-toolchain work needed here.
 
 ## 9. Codex implementation review (2026-07-16) — outstanding fixes
 

@@ -3,7 +3,7 @@ extension/config.local.js
 __pycache__/
 *.py[cod]
 .pytest_cache/
-output/*.pdf
+output/*
 *.aux
 *.log
 *.out
