@@ -17,35 +17,10 @@ async function settings() {
   };
 }
 
-async function api(path, body) {
-  const config = await settings();
-  const url = new URL(config.backendUrl);
-  if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname)) {
-    throw new Error("Backend URL must be a local http://127.0.0.1 or http://localhost address.");
-  }
-  const response = await fetch(`${config.backendUrl}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Extension-Secret": config.sharedSecret },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    let detail = `Backend returned ${response.status}`;
-    try {
-      const payload = await response.json();
-      detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail, null, 2);
-    } catch {}
-    throw new Error(detail);
-  }
-  return response.json();
-}
-
-async function extractActivePage() {
+async function activeTabId() {
   const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/.test(tab.url || "")) throw new Error("Open a regular http(s) job posting tab first.");
-  await ext.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-  const result = await ext.tabs.sendMessage(tab.id, { type: "EXTRACT_JOB_POSTING" });
-  if (!result?.ok) throw new Error(result?.error || "Could not read this page.");
-  return result.text;
+  return tab.id;
 }
 
 function renderResults() {
@@ -55,6 +30,14 @@ function renderResults() {
   $("#keywords").replaceChildren(...state.analysis.keywords.map((keyword) => {
     const chip = document.createElement("span"); chip.className = "chip"; chip.textContent = keyword.term; return chip;
   }));
+
+  const flaggedCount = state.edits.filter((edit) => !edit.traceable).length;
+  const selectableCount = state.edits.length - flaggedCount;
+  $("#edit-summary").textContent = state.edits.length === 0
+    ? "No edits were proposed for this posting — the resume will compile unchanged unless you go back and try a more closely matching posting."
+    : `${state.edits.length} edit${state.edits.length === 1 ? "" : "s"} proposed`
+      + (flaggedCount ? `, ${flaggedCount} safety-flagged (see reasons below)` : "")
+      + (selectableCount ? `, ${selectableCount} selected` : ", none selectable");
 
   $("#edits").replaceChildren(...state.edits.map((edit, index) => {
     const card = document.createElement("article");
@@ -77,17 +60,39 @@ function renderResults() {
   hide("#progress"); show("#results");
 }
 
+function applyTailorState(tailorState) {
+  if (!tailorState || tailorState.status === "idle") return;
+  clearError(); hide("#intro"); hide("#results"); hide("#done");
+  if (tailorState.status === "running") {
+    setProgress(tailorState.step || "Working…");
+  } else if (tailorState.status === "done") {
+    state.jobText = tailorState.jobText;
+    state.analysis = tailorState.analysis;
+    state.edits = tailorState.edits;
+    renderResults();
+  } else if (tailorState.status === "error") {
+    showError(tailorState.error); show("#intro");
+  }
+}
+
+ext.runtime.onMessage.addListener((message) => {
+  if (message?.type === "TAILOR_STATE") applyTailorState(message.state);
+});
+
 async function tailor() {
   clearError(); hide("#intro"); hide("#results"); hide("#done");
   try {
     setProgress("Reading visible job-posting text…");
-    state.jobText = await extractActivePage();
-    setProgress("Extracting role requirements…");
-    state.analysis = await api("/extract-keywords", { job_text: state.jobText });
-    setProgress("Drafting grounded resume edits…");
-    const diff = await api("/generate-diff", { job_text: state.jobText, keywords: state.analysis.keywords });
-    state.edits = diff.edits;
-    renderResults();
+    const tabId = await activeTabId();
+    const config = await settings();
+    await ext.runtime.sendMessage({
+      type: "START_TAILOR",
+      tabId,
+      backendUrl: config.backendUrl,
+      sharedSecret: config.sharedSecret
+    });
+    // The background worker now owns the run and will push TAILOR_STATE
+    // updates (caught above) even if this popup is closed and reopened.
   } catch (error) {
     showError(error.message); show("#intro");
   }
@@ -114,6 +119,7 @@ async function compile() {
       }
     });
     if (!result?.ok) throw new Error(result?.error || "The background download failed.");
+    ext.runtime.sendMessage({ type: "RESET_TAILOR_STATE" });
     hide("#progress"); show("#done");
   } catch (error) {
     showError(error.message); show("#results");
@@ -122,7 +128,10 @@ async function compile() {
 
 $("#tailor").addEventListener("click", tailor);
 $("#compile").addEventListener("click", compile);
-$("#restart").addEventListener("click", () => { hide("#done"); show("#intro"); });
+$("#restart").addEventListener("click", () => {
+  ext.runtime.sendMessage({ type: "RESET_TAILOR_STATE" });
+  hide("#done"); show("#intro");
+});
 $("#settings-toggle").addEventListener("click", () => $("#settings").classList.toggle("hidden"));
 $("#save-settings").addEventListener("click", async () => {
   clearError();
@@ -135,3 +144,4 @@ $("#save-settings").addEventListener("click", async () => {
 });
 
 settings().then((config) => { $("#backend-url").value = config.backendUrl; $("#shared-secret").value = config.sharedSecret; });
+ext.runtime.sendMessage({ type: "GET_TAILOR_STATE" }).then(applyTailorState).catch(() => {});
