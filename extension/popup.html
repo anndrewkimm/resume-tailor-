@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resume Tailor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">LOCAL RESUME WORKFLOW</p>
+      <h1>Resume Tailor</h1>
+    </div>
+    <button id="settings-toggle" class="icon-button" title="Settings" aria-label="Settings">⚙</button>
+  </header>
+
+  <section id="settings" class="panel hidden">
+    <label>Backend URL<input id="backend-url" type="url" value="http://127.0.0.1:8765"></label>
+    <label>Shared secret<input id="shared-secret" type="password" autocomplete="off"></label>
+    <button id="save-settings" class="secondary">Save settings</button>
+    <p id="settings-note" class="note"></p>
+  </section>
+
+  <main>
+    <div id="intro">
+      <p>Open one job posting, then generate small, reviewable edits grounded in your base resume.</p>
+      <button id="tailor" class="primary">Tailor this resume</button>
+    </div>
+
+    <section id="progress" class="hidden" aria-live="polite">
+      <div class="spinner"></div><span id="progress-text">Reading the posting…</span>
+    </section>
+
+    <section id="results" class="hidden">
+      <div class="role-heading">
+        <p id="company" class="eyebrow"></p>
+        <h2 id="role"></h2>
+      </div>
+      <details>
+        <summary><span id="keyword-count">0</span> matched posting signals</summary>
+        <div id="keywords" class="chips"></div>
+      </details>
+      <h3>Review proposed edits</h3>
+      <p class="note">Only checked edits are compiled. Safety-flagged edits cannot be selected.</p>
+      <div id="edits"></div>
+      <button id="compile" class="primary">Compile selected edits</button>
+    </section>
+
+    <section id="done" class="hidden success" aria-live="polite">
+      <h2>PDF ready</h2>
+      <p>Your tailored resume was compiled and sent to browser downloads.</p>
+      <button id="restart" class="secondary">Tailor another</button>
+    </section>
+
+    <div id="error" class="error hidden" role="alert"></div>
+  </main>
+  <script src="config.local.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+:root { color-scheme: light; --ink:#17211b; --muted:#667168; --paper:#f7f8f3; --card:#fff; --line:#dce2d9; --green:#176c49; --green-dark:#0e5035; --red:#a53832; }
+* { box-sizing:border-box; }
+body { width:440px; min-height:280px; margin:0; background:var(--paper); color:var(--ink); font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
+header { display:flex; align-items:center; justify-content:space-between; padding:20px 22px 14px; border-bottom:1px solid var(--line); }
+h1,h2,h3,p { margin-top:0; }
+h1 { margin-bottom:0; font:700 25px/1.1 Georgia,serif; }
+h2 { margin-bottom:8px; font-size:19px; }
+h3 { margin:20px 0 4px; font-size:14px; text-transform:uppercase; letter-spacing:.06em; }
+.eyebrow { margin-bottom:4px; color:var(--green); font-size:10px; font-weight:800; letter-spacing:.12em; }
+main { padding:20px 22px 24px; }
+button { border:0; border-radius:8px; padding:10px 14px; font:inherit; font-weight:700; cursor:pointer; }
+button:disabled { cursor:not-allowed; opacity:.5; }
+.primary { width:100%; background:var(--green); color:white; box-shadow:0 2px 6px #176c4930; }
+.primary:hover { background:var(--green-dark); }
+.secondary { background:#e8ede6; color:var(--ink); }
+.icon-button { padding:7px 9px; background:transparent; font-size:18px; }
+.panel { padding:16px 22px; background:#eef2eb; border-bottom:1px solid var(--line); }
+label { display:block; margin-bottom:10px; color:var(--muted); font-size:12px; font-weight:700; }
+input { display:block; width:100%; margin-top:4px; padding:8px 9px; border:1px solid #bdc8bd; border-radius:6px; background:white; color:var(--ink); }
+.hidden { display:none !important; }
+#progress { display:flex; align-items:center; gap:10px; padding:24px 0; color:var(--muted); }
+.spinner { width:17px; height:17px; border:2px solid #bed0c4; border-top-color:var(--green); border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+details { padding:10px 0; border-block:1px solid var(--line); }
+summary { cursor:pointer; font-weight:700; }
+.chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:9px; }
+.chip { padding:3px 7px; border-radius:99px; background:#e1ebe3; color:#24543c; font-size:11px; }
+.edit { margin:10px 0; padding:12px; border:1px solid var(--line); border-radius:9px; background:var(--card); }
+.edit.flagged { border-color:#e2aaa6; background:#fff8f7; }
+.edit-head { display:flex; align-items:flex-start; gap:9px; margin-bottom:8px; }
+.edit-head input { width:auto; margin:3px 0 0; }
+.target { font-weight:800; }
+.reason,.note { margin-bottom:8px; color:var(--muted); font-size:12px; }
+.copy { margin:5px 0; padding:7px 9px; border-radius:5px; background:#f3f4f0; font-size:12px; overflow-wrap:anywhere; }
+.copy.new { border-left:3px solid var(--green); }
+.copy.old { color:#6d756f; text-decoration-color:#aeb6af; }
+.flag { color:var(--red); font-size:12px; font-weight:700; }
+.error,.success { margin-top:14px; padding:12px; border-radius:8px; }
+.error { background:#f8e5e3; color:#7e2520; white-space:pre-wrap; }
+.success { background:#e4efe5; }
+.success .secondary { width:100%; }

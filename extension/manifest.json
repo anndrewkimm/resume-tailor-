@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Resume Tailor",
+  "version": "1.0.0",
+  "description": "Tailor a local LaTeX resume to the job posting in the active tab.",
+  "permissions": ["activeTab", "scripting", "storage", "downloads"],
+  "background": {
+    "scripts": ["background.js"],
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
+  ],
+  "action": {
+    "default_title": "Resume Tailor",
+    "default_popup": "popup.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "resume-tailor@local.andrewkim",
+      "strict_min_version": "109.0"
+    }
+  }
+}
