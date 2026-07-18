@@ -10,6 +10,19 @@ class Keyword(BaseModel):
     evidence: str = Field(min_length=1, max_length=500)
 
 
+class KeywordMatch(BaseModel):
+    term: str
+    category: str
+    importance: str
+    matched: bool
+
+
+class FitReport(BaseModel):
+    score: int = Field(ge=0, le=100)
+    matched: list[KeywordMatch] = Field(default_factory=list)
+    missing: list[KeywordMatch] = Field(default_factory=list)
+
+
 class ExtractKeywordsRequest(BaseModel):
     job_text: str = Field(min_length=50)
 
@@ -59,8 +72,62 @@ class GenerateDiffResponse(BaseModel):
     edits: list[ReviewedEdit]
 
 
+class StartTailorRequest(BaseModel):
+    job_text: str = Field(min_length=50)
+
+
+class StartTailorResponse(BaseModel):
+    job_id: str
+
+
+class TailorStatusResponse(BaseModel):
+    status: Literal["running", "done", "error"]
+    step: str = ""
+    company: str | None = None
+    role: str | None = None
+    keywords: list[Keyword] = Field(default_factory=list)
+    edits: list[ReviewedEdit] = Field(default_factory=list)
+    fit: FitReport | None = None
+    error: str | None = None
+
+
 class CompileRequest(BaseModel):
     company: str = Field(default="Company", max_length=120)
     role: str = Field(default="Role", max_length=160)
     approved_edits: list[ProposedEdit] = Field(default_factory=list, max_length=50)
     keywords: list[Keyword] = Field(default_factory=list, max_length=100)
+
+
+class LetterParagraph(BaseModel):
+    text: str = Field(min_length=1, max_length=1200)
+
+
+class CoverLetterDraftResponse(BaseModel):
+    paragraphs: list[LetterParagraph] = Field(min_length=2, max_length=6)
+
+
+class ReviewedParagraph(BaseModel):
+    text: str
+    issues: list[str] = Field(default_factory=list)
+
+
+class StartCoverLetterRequest(BaseModel):
+    job_text: str = Field(min_length=50)
+    company: str = Field(default="Company", max_length=120)
+    role: str = Field(default="Role", max_length=160)
+    keywords: list[Keyword] = Field(min_length=1, max_length=100)
+
+
+class CoverLetterStatusResponse(BaseModel):
+    status: Literal["running", "done", "error"]
+    step: str = ""
+    paragraphs: list[ReviewedParagraph] = Field(default_factory=list)
+    error: str | None = None
+
+
+class CompileCoverLetterRequest(BaseModel):
+    company: str = Field(default="Company", max_length=120)
+    role: str = Field(default="Role", max_length=160)
+    paragraphs: list[LetterParagraph] = Field(min_length=1, max_length=8)
+    keywords: list[Keyword] = Field(default_factory=list, max_length=100)
+    confirmed_by_user: bool = False

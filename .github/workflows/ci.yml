@@ -1,0 +1,64 @@
+# Live Ollama, Firefox, and HTTP smoke tests remain manual because they need
+# large models or interactive/local services. This workflow keeps CI fast and
+# deterministic; it also intentionally avoids apt-package caching in v1.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r backend/requirements.txt
+      - run: python -m unittest discover -s backend/tests -v
+
+  latex-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          texlive-latex-base texlive-latex-recommended texlive-fonts-recommended poppler-utils
+      - name: Compile one-page resume and cover-letter template
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch="$(mktemp -d)"
+          cp resume.tex resume.cls "$scratch/"
+          pushd "$scratch"
+          pdflatex -no-shell-escape -interaction=nonstopmode -halt-on-error resume.tex
+          pdflatex -no-shell-escape -interaction=nonstopmode -halt-on-error resume.tex
+          test -f resume.pdf
+          pdfinfo resume.pdf | grep -E '^Pages:\s+1$'
+          popd
+          sed -e 's/<<COMPANY>>/Example Company/g' \
+              -e 's/<<ROLE>>/Software Engineer/g' \
+              -e 's/<<BODY>>/A short grounded cover letter paragraph./g' \
+              cover_letter_template.tex > "$scratch/cover_letter.tex"
+          pushd "$scratch"
+          pdflatex -no-shell-escape -interaction=nonstopmode -halt-on-error cover_letter.tex
+          pdflatex -no-shell-escape -interaction=nonstopmode -halt-on-error cover_letter.tex
+          test -f cover_letter.pdf
+          pdfinfo cover_letter.pdf | grep -E '^Pages:\s+1$'
+
+  extension-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check JavaScript syntax
+        shell: bash
+        run: for file in extension/*.js extension/tests/*.js; do node --check "$file"; done
+      - run: node extension/tests/background.test.js

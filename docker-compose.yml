@@ -1,0 +1,21 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./backend:/config/backend
+      - ./extension:/config/extension
+      - ./resume.tex:/app/resume.tex:ro
+      - ./resume.cls:/app/resume.cls:ro
+      - ./output:/app/output
+      - ./data:/app/data
+      - ollama-models:/root/.ollama
+    environment:
+      CONFIG_REPO_ROOT: /config
+      OLLAMA_MODEL: qwen2.5:7b-instruct
+
+volumes:
+  ollama-models:

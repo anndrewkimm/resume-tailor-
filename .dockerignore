@@ -1,0 +1,11 @@
+.git
+.agents
+.claude
+.pytest_cache
+backend/.env
+backend/.pytest_cache
+backend/**/__pycache__
+data
+extension/config.local.js
+output
+resume.tex

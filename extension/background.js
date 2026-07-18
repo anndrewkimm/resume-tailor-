@@ -8,16 +8,6 @@ function localBackendUrl(value) {
   return url.href.replace(/\/$/, "");
 }
 
-// Runs the extraction + analysis pipeline here in the persistent background
-// worker (not in popup.js) so that switching tabs or closing the popup mid-run
-// no longer aborts the job. Popups reopen and call GET_TAILOR_STATE to catch
-// up on whatever this produced while they were gone.
-let tailorState = { status: "idle" };
-
-function broadcastTailorState() {
-  ext.runtime.sendMessage({ type: "TAILOR_STATE", state: tailorState }).catch(() => {});
-}
-
 async function extractJobPosting(tabId) {
   await ext.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
   const result = await ext.tabs.sendMessage(tabId, { type: "EXTRACT_JOB_POSTING" });
@@ -42,24 +32,102 @@ async function callApi(backendUrl, sharedSecret, path, body) {
   return response.json();
 }
 
-async function runTailor({ tabId, backendUrl, sharedSecret }) {
-  tailorState = { status: "running", step: "Reading visible job-posting text…" };
-  broadcastTailorState();
-  try {
-    const url = localBackendUrl(backendUrl);
-    const jobText = await extractJobPosting(tabId);
-    tailorState = { status: "running", step: "Extracting role requirements…" };
-    broadcastTailorState();
-    const analysis = await callApi(url, sharedSecret, "/extract-keywords", { job_text: jobText });
-    tailorState = { status: "running", step: "Drafting grounded resume edits…" };
-    broadcastTailorState();
-    const diff = await callApi(url, sharedSecret, "/generate-diff", { job_text: jobText, keywords: analysis.keywords });
-    tailorState = { status: "done", jobText, analysis, edits: diff.edits };
-  } catch (error) {
-    tailorState = { status: "error", error: error.message };
-  }
-  broadcastTailorState();
+async function startTailor({ tabId, backendUrl, sharedSecret }) {
+  const url = localBackendUrl(backendUrl);
+  await ext.storage.local.remove(["tailorResult", "activeJobId"]);
+  const jobText = await extractJobPosting(tabId);
+  const { job_id: jobId } = await callApi(url, sharedSecret, "/tailor/start", { job_text: jobText });
+  if (!jobId) throw new Error("Backend did not return a tailoring job ID.");
+
+  await ext.storage.local.set({
+    activeJobId: jobId,
+    jobText,
+    backendUrl: url,
+    sharedSecret: sharedSecret || "",
+    tailorResult: { status: "running", step: "Extracting role requirements…" }
+  });
+  await ext.alarms.create("tailor-poll", { periodInMinutes: 1 / 15 });
 }
+
+async function startCoverLetter({ jobText, company, role, keywords, backendUrl, sharedSecret }) {
+  const url = localBackendUrl(backendUrl);
+  await ext.storage.local.remove(["letterResult", "activeLetterJobId"]);
+  const { job_id: jobId } = await callApi(url, sharedSecret, "/cover-letter/start", {
+    job_text: jobText,
+    company,
+    role,
+    keywords
+  });
+  if (!jobId) throw new Error("Backend did not return a cover-letter job ID.");
+  await ext.storage.local.set({
+    activeLetterJobId: jobId,
+    backendUrl: url,
+    sharedSecret: sharedSecret || "",
+    letterResult: { status: "running", step: "Drafting a grounded cover letter…" }
+  });
+  await ext.alarms.create("letter-poll", { periodInMinutes: 1 / 15 });
+}
+
+async function pollStoredJob({ alarmName, jobKey, resultKey, statusPath }) {
+  const stored = await ext.storage.local.get([jobKey, "backendUrl", "sharedSecret"]);
+  const jobId = stored[jobKey];
+  if (!jobId) {
+    await ext.alarms.clear(alarmName);
+    return;
+  }
+
+  const backendUrl = localBackendUrl(stored.backendUrl);
+  try {
+    const response = await fetch(
+      `${backendUrl}${statusPath}/${encodeURIComponent(jobId)}`,
+      { headers: { "X-Extension-Secret": stored.sharedSecret || "" } }
+    );
+    if (!response.ok) {
+      let detail = `Backend returned ${response.status}`;
+      try {
+        const payload = await response.json();
+        detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail, null, 2);
+      } catch {}
+      await ext.storage.local.set({
+        [resultKey]: { status: "error", step: "", error: detail }
+      });
+      await ext.alarms.clear(alarmName);
+      await ext.storage.local.remove(jobKey);
+      return;
+    }
+
+    const result = await response.json();
+    await ext.storage.local.set({ [resultKey]: result });
+    if (result.status !== "running") {
+      await ext.alarms.clear(alarmName);
+      await ext.storage.local.remove(jobKey);
+    }
+  } catch (error) {
+    // Keep the durable alarm and job ID so a temporary backend/network outage
+    // can recover on the next poll instead of losing a completed backend job.
+    await ext.storage.local.set({
+      [resultKey]: { status: "running", step: `Waiting for backend… ${error.message}` }
+    });
+  }
+}
+
+ext.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === "tailor-poll") {
+    await pollStoredJob({
+      alarmName: "tailor-poll",
+      jobKey: "activeJobId",
+      resultKey: "tailorResult",
+      statusPath: "/tailor/status"
+    });
+  } else if (alarm.name === "letter-poll") {
+    await pollStoredJob({
+      alarmName: "letter-poll",
+      jobKey: "activeLetterJobId",
+      resultKey: "letterResult",
+      statusPath: "/cover-letter/status"
+    });
+  }
+});
 
 const activeBlobUrls = new Map();
 
@@ -95,9 +163,9 @@ ext.downloads.onChanged.addListener((delta) => {
   releaseBlobUrl(delta.id);
 });
 
-async function compileAndDownload(message) {
+async function compileAndDownload(message, endpoint = "/compile", fallbackName = "Tailored_Resume.pdf") {
   const backendUrl = localBackendUrl(message.backendUrl);
-  const response = await fetch(`${backendUrl}/compile`, {
+  const response = await fetch(`${backendUrl}${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -115,7 +183,7 @@ async function compileAndDownload(message) {
   }
 
   const disposition = response.headers.get("Content-Disposition") || "";
-  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || "Tailored_Resume.pdf";
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || fallbackName;
   const resource = pdfDownloadResource(await response.arrayBuffer());
   let downloadId;
   try {
@@ -139,24 +207,28 @@ async function compileAndDownload(message) {
 
 ext.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "COMPILE_AND_DOWNLOAD") {
-    compileAndDownload(message)
+    compileAndDownload(message, "/compile", "Tailored_Resume.pdf")
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message?.type === "COMPILE_LETTER_AND_DOWNLOAD") {
+    compileAndDownload(message, "/cover-letter/compile", "Cover_Letter.pdf")
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   if (message?.type === "START_TAILOR") {
-    if (tailorState.status !== "running") runTailor(message);
-    sendResponse({ ok: true });
-    return false;
+    startTailor(message)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
   }
-  if (message?.type === "GET_TAILOR_STATE") {
-    sendResponse(tailorState);
-    return false;
-  }
-  if (message?.type === "RESET_TAILOR_STATE") {
-    tailorState = { status: "idle" };
-    sendResponse({ ok: true });
-    return false;
+  if (message?.type === "START_COVER_LETTER") {
+    startCoverLetter(message)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
   }
   return false;
 });

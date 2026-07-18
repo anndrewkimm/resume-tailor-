@@ -1,11 +1,12 @@
 const $ = (selector) => document.querySelector(selector);
 const ext = globalThis.browser ?? globalThis.chrome;
 const localConfig = globalThis.RESUME_TAILOR_LOCAL ?? {};
-const state = { jobText: "", analysis: null, edits: [] };
+const state = { analysis: null, edits: [], paragraphs: [] };
 
 function show(id) { $(id).classList.remove("hidden"); }
 function hide(id) { $(id).classList.add("hidden"); }
-function setProgress(message) { $("#progress-text").textContent = message; show("#progress"); }
+function hideViews() { ["#intro", "#progress", "#results", "#letter", "#done"].forEach(hide); }
+function setProgress(message) { hideViews(); $("#progress-text").textContent = message; show("#progress"); }
 function showError(message) { $("#error").textContent = message; show("#error"); hide("#progress"); }
 function clearError() { hide("#error"); $("#error").textContent = ""; }
 
@@ -23,13 +24,66 @@ async function activeTabId() {
   return tab.id;
 }
 
+function renderFitAndKeywords() {
+  const fit = state.analysis.fit;
+  const keywords = fit ? [...fit.matched, ...fit.missing] : state.analysis.keywords;
+  $("#keyword-count").textContent = keywords.length;
+  if (fit) {
+    $("#fit-summary").textContent = `Fit: ${fit.score}% — ${fit.matched.length} of ${keywords.length} keywords covered`;
+    show("#fit-summary");
+    const hasHighMissing = fit.missing.some((keyword) => keyword.importance === "high");
+    $("#fit-warning").textContent = hasHighMissing
+      ? "Missing keywords cannot be added by tailoring — this tool never invents experience. A low fit score means this posting may not be worth the application, or the resume needs real (human) updating."
+      : "";
+    $("#fit-warning").classList.toggle("hidden", !hasHighMissing);
+  } else {
+    hide("#fit-summary");
+    hide("#fit-warning");
+  }
+  $("#keywords").replaceChildren(...keywords.map((keyword) => {
+    const chip = document.createElement("span");
+    chip.className = `chip${keyword.matched === false ? " chip-missing" : ""}`;
+    chip.textContent = keyword.term;
+    return chip;
+  }));
+}
+
+function commonRejectedEntitySummary() {
+  const flaggedBullets = state.edits.filter((edit) =>
+    !edit.traceable && ["Experience", "Projects"].includes(edit.target.section)
+  );
+  const counts = new Map();
+  for (const edit of flaggedBullets) {
+    const seen = new Set();
+    for (const issue of edit.issues || []) {
+      const match = issue.match(/^entity is not grounded in the original target bullet:\s*(.+)$/i);
+      if (match && !seen.has(match[1])) {
+        seen.add(match[1]);
+        counts.set(match[1], (counts.get(match[1]) || 0) + 1);
+      }
+    }
+  }
+  const [entity, count] = [...counts.entries()].sort((left, right) => right[1] - left[1])[0] || [];
+  return entity && count > flaggedBullets.length / 2
+    ? `Most rejected edits tried to add “${entity}” to a bullet that doesn't currently describe it. Nothing was changed there because that would be an unsupported claim, not because of a technical error.`
+    : "";
+}
+
+function copyBlock(labelText, value, className) {
+  const block = document.createElement("div");
+  block.className = `copy ${className}`;
+  const label = document.createElement("span");
+  label.className = "copy-label";
+  label.textContent = labelText;
+  block.append(label, document.createTextNode(value));
+  return block;
+}
+
 function renderResults() {
+  hideViews();
   $("#company").textContent = state.analysis.company;
   $("#role").textContent = state.analysis.role;
-  $("#keyword-count").textContent = state.analysis.keywords.length;
-  $("#keywords").replaceChildren(...state.analysis.keywords.map((keyword) => {
-    const chip = document.createElement("span"); chip.className = "chip"; chip.textContent = keyword.term; return chip;
-  }));
+  renderFitAndKeywords();
 
   const flaggedCount = state.edits.filter((edit) => !edit.traceable).length;
   const selectableCount = state.edits.length - flaggedCount;
@@ -38,6 +92,9 @@ function renderResults() {
     : `${state.edits.length} edit${state.edits.length === 1 ? "" : "s"} proposed`
       + (flaggedCount ? `, ${flaggedCount} safety-flagged (see reasons below)` : "")
       + (selectableCount ? `, ${selectableCount} selected` : ", none selectable");
+  const rejectionSummary = commonRejectedEntitySummary();
+  $("#rejection-summary").textContent = rejectionSummary;
+  $("#rejection-summary").classList.toggle("hidden", !rejectionSummary);
 
   $("#edits").replaceChildren(...state.edits.map((edit, index) => {
     const card = document.createElement("article");
@@ -49,62 +106,113 @@ function renderResults() {
     title.textContent = `${edit.target.section} · ${edit.target.anchor}${edit.target.item_index === null ? "" : ` · bullet ${edit.target.item_index + 1}`}`;
     head.append(check, title);
     const reason = document.createElement("p"); reason.className = "reason"; reason.textContent = edit.reason;
-    const oldCopy = document.createElement("div"); oldCopy.className = "copy old"; oldCopy.textContent = edit.original_text || "Target not found";
-    const newCopy = document.createElement("div"); newCopy.className = "copy new"; newCopy.textContent = edit.new_text;
-    card.append(head, reason, oldCopy, newCopy);
+    card.append(
+      head,
+      reason,
+      copyBlock("Current: ", edit.original_text || "Target not found", "old"),
+      copyBlock("Proposed: ", edit.new_text, "new")
+    );
     if (!edit.traceable) {
       const flag = document.createElement("div"); flag.className = "flag"; flag.textContent = edit.issues.join(" · "); card.append(flag);
     }
     return card;
   }));
-  hide("#progress"); show("#results");
+  show("#results");
 }
 
 function applyTailorState(tailorState) {
   if (!tailorState || tailorState.status === "idle") return;
-  clearError(); hide("#intro"); hide("#results"); hide("#done");
+  clearError();
   if (tailorState.status === "running") {
-    setProgress(tailorState.step || "Working…");
+    const fitProgress = tailorState.fit ? ` Fit: ${tailorState.fit.score}%.` : "";
+    setProgress(`${tailorState.step || "Working…"}${fitProgress}`);
   } else if (tailorState.status === "done") {
-    state.jobText = tailorState.jobText;
-    state.analysis = tailorState.analysis;
-    state.edits = tailorState.edits;
+    state.analysis = {
+      company: tailorState.company || "Company",
+      role: tailorState.role || "Role",
+      keywords: tailorState.keywords || [],
+      fit: tailorState.fit || null
+    };
+    state.edits = tailorState.edits || [];
     renderResults();
   } else if (tailorState.status === "error") {
-    showError(tailorState.error); show("#intro");
+    hideViews(); showError(tailorState.error); show("#intro");
   }
 }
 
-ext.runtime.onMessage.addListener((message) => {
-  if (message?.type === "TAILOR_STATE") applyTailorState(message.state);
+function renderLetter() {
+  hideViews();
+  const hasIssues = state.paragraphs.some((paragraph) => (paragraph.issues || []).length);
+  $("#letter-heading").textContent = `${state.analysis.role} at ${state.analysis.company}`;
+  $("#letter-paragraphs").replaceChildren(...state.paragraphs.map((paragraph, index) => {
+    const card = document.createElement("article");
+    card.className = `letter-paragraph${paragraph.issues?.length ? " flagged" : ""}`;
+    const label = document.createElement("label");
+    label.textContent = `Paragraph ${index + 1}`;
+    const textarea = document.createElement("textarea");
+    textarea.dataset.index = index;
+    textarea.maxLength = 1200;
+    textarea.value = paragraph.text;
+    label.append(textarea);
+    card.append(label);
+    if (paragraph.issues?.length) {
+      const flag = document.createElement("div");
+      flag.className = "flag";
+      flag.textContent = paragraph.issues.join(" · ");
+      card.append(flag);
+    }
+    return card;
+  }));
+  $("#confirm-letter").checked = false;
+  $("#letter-confirm-wrap").classList.toggle("hidden", !hasIssues);
+  show("#letter");
+}
+
+function applyLetterState(letterState) {
+  if (!letterState) return;
+  clearError();
+  if (letterState.status === "running") {
+    setProgress(letterState.step || "Drafting a grounded cover letter…");
+  } else if (letterState.status === "done") {
+    state.paragraphs = letterState.paragraphs || [];
+    renderLetter();
+  } else if (letterState.status === "error") {
+    renderResults();
+    showError(letterState.error);
+  }
+}
+
+ext.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (changes.tailorResult?.newValue) applyTailorState(changes.tailorResult.newValue);
+  if (changes.letterResult?.newValue) applyLetterState(changes.letterResult.newValue);
 });
 
 async function tailor() {
-  clearError(); hide("#intro"); hide("#results"); hide("#done");
+  clearError();
   try {
     setProgress("Reading visible job-posting text…");
     const tabId = await activeTabId();
     const config = await settings();
-    await ext.runtime.sendMessage({
+    const result = await ext.runtime.sendMessage({
       type: "START_TAILOR",
       tabId,
       backendUrl: config.backendUrl,
       sharedSecret: config.sharedSecret
     });
-    // The background worker now owns the run and will push TAILOR_STATE
-    // updates (caught above) even if this popup is closed and reopened.
+    if (!result?.ok) throw new Error(result?.error || "Could not start the tailoring job.");
   } catch (error) {
-    showError(error.message); show("#intro");
+    hideViews(); showError(error.message); show("#intro");
   }
 }
 
-async function compile() {
+async function compileResume() {
   clearError();
   const approved = [...document.querySelectorAll(".edit input:checked")].map((input) => {
     const { original_text, traceable, issues, ...proposal } = state.edits[Number(input.dataset.index)];
     return proposal;
   });
-  hide("#results"); setProgress("Compiling the selected edits…");
+  setProgress("Compiling the selected edits…");
   try {
     const config = await settings();
     const result = await ext.runtime.sendMessage({
@@ -119,19 +227,88 @@ async function compile() {
       }
     });
     if (!result?.ok) throw new Error(result?.error || "The background download failed.");
-    ext.runtime.sendMessage({ type: "RESET_TAILOR_STATE" });
-    hide("#progress"); show("#done");
+    await ext.storage.local.remove(["tailorResult", "activeJobId"]);
+    $("#done-title").textContent = "Resume PDF ready";
+    $("#done-copy").textContent = "Your tailored resume was compiled and sent to browser downloads.";
+    hideViews(); show("#done");
   } catch (error) {
-    showError(error.message); show("#results");
+    renderResults(); showError(error.message);
   }
 }
 
+async function draftLetter() {
+  clearError();
+  try {
+    const stored = await ext.storage.local.get("jobText");
+    if (!stored.jobText) throw new Error("The original posting text is unavailable. Tailor the posting again first.");
+    const config = await settings();
+    setProgress("Starting a grounded cover-letter draft…");
+    const result = await ext.runtime.sendMessage({
+      type: "START_COVER_LETTER",
+      jobText: stored.jobText,
+      company: state.analysis.company,
+      role: state.analysis.role,
+      keywords: state.analysis.keywords,
+      backendUrl: config.backendUrl,
+      sharedSecret: config.sharedSecret
+    });
+    if (!result?.ok) throw new Error(result?.error || "Could not start the cover letter.");
+  } catch (error) {
+    renderResults(); showError(error.message);
+  }
+}
+
+async function compileLetter() {
+  clearError();
+  const paragraphs = [...document.querySelectorAll("#letter-paragraphs textarea")].map((textarea) => ({
+    text: textarea.value.trim()
+  }));
+  setProgress("Compiling the cover letter…");
+  try {
+    const config = await settings();
+    const result = await ext.runtime.sendMessage({
+      type: "COMPILE_LETTER_AND_DOWNLOAD",
+      backendUrl: config.backendUrl,
+      sharedSecret: config.sharedSecret,
+      payload: {
+        company: state.analysis.company,
+        role: state.analysis.role,
+        keywords: state.analysis.keywords,
+        paragraphs,
+        confirmed_by_user: $("#confirm-letter").checked
+      }
+    });
+    if (!result?.ok) throw new Error(result?.error || "The cover-letter download failed.");
+    await ext.storage.local.remove(["letterResult", "activeLetterJobId"]);
+    $("#done-title").textContent = "Cover-letter PDF ready";
+    $("#done-copy").textContent = "Your cover letter was compiled and sent to browser downloads.";
+    hideViews(); show("#done");
+  } catch (error) {
+    renderLetter();
+    if (/explicit user confirmation|require.*confirmation/i.test(error.message)) {
+      show("#letter-confirm-wrap");
+    }
+    showError(error.message);
+  }
+}
+
+async function resetTailor() {
+  await ext.storage.local.remove([
+    "tailorResult", "activeJobId", "jobText", "letterResult", "activeLetterJobId"
+  ]);
+  state.analysis = null;
+  state.edits = [];
+  state.paragraphs = [];
+  clearError(); hideViews(); show("#intro");
+}
+
 $("#tailor").addEventListener("click", tailor);
-$("#compile").addEventListener("click", compile);
-$("#restart").addEventListener("click", () => {
-  ext.runtime.sendMessage({ type: "RESET_TAILOR_STATE" });
-  hide("#done"); show("#intro");
-});
+$("#compile").addEventListener("click", compileResume);
+$("#draft-letter").addEventListener("click", draftLetter);
+$("#compile-letter").addEventListener("click", compileLetter);
+$("#back-to-results").addEventListener("click", renderResults);
+$("#new-tailor").addEventListener("click", resetTailor);
+$("#restart").addEventListener("click", resetTailor);
 $("#settings-toggle").addEventListener("click", () => $("#settings").classList.toggle("hidden"));
 $("#save-settings").addEventListener("click", async () => {
   clearError();
@@ -144,4 +321,9 @@ $("#save-settings").addEventListener("click", async () => {
 });
 
 settings().then((config) => { $("#backend-url").value = config.backendUrl; $("#shared-secret").value = config.sharedSecret; });
-ext.runtime.sendMessage({ type: "GET_TAILOR_STATE" }).then(applyTailorState).catch(() => {});
+ext.storage.local.get(["tailorResult", "activeJobId", "letterResult", "activeLetterJobId"]).then((stored) => {
+  if (stored.tailorResult) applyTailorState(stored.tailorResult);
+  else if (stored.activeJobId) setProgress("Waiting for the backend…");
+  if (stored.letterResult) applyLetterState(stored.letterResult);
+  else if (stored.activeLetterJobId) setProgress("Waiting for the cover-letter draft…");
+}).catch(() => {});

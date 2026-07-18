@@ -3,7 +3,7 @@
   "name": "Resume Tailor",
   "version": "1.0.0",
   "description": "Tailor a local LaTeX resume to the job posting in the active tab.",
-  "permissions": ["activeTab", "scripting", "storage", "downloads"],
+  "permissions": ["activeTab", "scripting", "storage", "downloads", "alarms"],
   "background": {
     "scripts": ["background.js"],
     "service_worker": "background.js"

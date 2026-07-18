@@ -37,20 +37,38 @@
         <p id="company" class="eyebrow"></p>
         <h2 id="role"></h2>
       </div>
+      <p id="fit-summary" class="fit-summary hidden"></p>
       <details>
-        <summary><span id="keyword-count">0</span> matched posting signals</summary>
+        <summary><span id="keyword-count">0</span> posting signals</summary>
         <div id="keywords" class="chips"></div>
       </details>
+      <p id="fit-warning" class="warning hidden"></p>
       <h3>Review proposed edits</h3>
       <p class="note">Only checked edits are compiled. Safety-flagged edits cannot be selected.</p>
       <p id="edit-summary" class="note"></p>
+      <p id="rejection-summary" class="warning hidden"></p>
       <div id="edits"></div>
       <button id="compile" class="primary">Compile selected edits</button>
+      <button id="draft-letter" class="secondary action-button">Draft cover letter</button>
+      <button id="new-tailor" class="secondary reset-results">Tailor another posting</button>
+    </section>
+
+    <section id="letter" class="hidden">
+      <p class="eyebrow">REVIEW-GATED COVER LETTER</p>
+      <h2 id="letter-heading"></h2>
+      <p class="note">Edit every paragraph as needed. Grounding flags require an explicit truth confirmation.</p>
+      <div id="letter-paragraphs"></div>
+      <label id="letter-confirm-wrap" class="confirm hidden">
+        <input id="confirm-letter" type="checkbox">
+        <span>I confirm every claim in this letter is true.</span>
+      </label>
+      <button id="compile-letter" class="primary">Compile letter</button>
+      <button id="back-to-results" class="secondary action-button">Back to resume review</button>
     </section>
 
     <section id="done" class="hidden success" aria-live="polite">
-      <h2>PDF ready</h2>
-      <p>Your tailored resume was compiled and sent to browser downloads.</p>
+      <h2 id="done-title">PDF ready</h2>
+      <p id="done-copy">Your PDF was compiled and sent to browser downloads.</p>
       <button id="restart" class="secondary">Tailor another</button>
     </section>
 

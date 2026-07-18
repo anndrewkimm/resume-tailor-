@@ -30,6 +30,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="resume-tailor-http-") as tmp:
         environment = os.environ.copy()
         environment["OUTPUT_DIR"] = tmp
+        environment["DATA_DIR"] = str(Path(tmp) / "data")
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         server = subprocess.Popen(
             [
