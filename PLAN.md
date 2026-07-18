@@ -878,3 +878,61 @@ changing `resume.tex` or `resume.cls`:
 Verification: 35 Python tests pass, the Firefox background-download binary
 regression passes, and both real LaTeX page-count checks pass. The template
 files were not modified.
+
+## 13. Feature-roadmap review against a public job-search repo (2026-07-18)
+
+The user brought in the file structure of a trending GitHub repo
+("ai-job-search" — a Claude Code-native workflow built on slash commands,
+portal-scraper skills, and a tracked application pipeline) explicitly **as a
+source of ideas, not a design to emulate** — its architecture (agent
+commands + scrapers) is fundamentally different from this project's
+(extension + local backend + review-gated editing), and that difference is
+deliberate. The user also stated a sharpened project goal in this session:
+**improve efficiency and the likelihood of passing automated/AI resume
+screening (ATS keyword matching).** That goal drove the prioritization
+below.
+
+### 13.1 Adopted — four specs written for Codex, in implementation order
+
+1. `CODEX_TASK_job_fit_score.md` — deterministic keyword-coverage score
+   (posting keywords vs. whole-resume entity matching, reusing
+   `resume_parser`'s matchers). Directly serves the ATS goal; zero new
+   model calls; shows which keywords are missing and therefore *cannot* be
+   tailored in under §2. Implement first — smallest, and the tracker
+   consumes it.
+2. `CODEX_TASK_application_tracker.md` — append-only local application log
+   (`data/applications.jsonl`), outcome-recording CLI, self-contained HTML
+   report. Deliberately CLI-only: no unauthenticated HTTP endpoints (§3.2's
+   localhost-exposure warning applies to any report endpoint a browser tab
+   could reach without the shared secret).
+3. `CODEX_TASK_github_actions_ci.md` — run the (fully mocked, fast) unit
+   suites plus a real minimal-TeX smoke compile of `resume.tex` with a
+   `Pages: 1` assertion, making §12.1's one-page rule a CI-enforced
+   property. Ollama/Firefox smoke scripts stay manual.
+4. `CODEX_TASK_cover_letter.md` — second document type, largest task, the
+   only one touching the safety model. Grounding rules are deliberately
+   different from bullet edits (whole-resume grounding for numbers/entities,
+   free connective prose, LaTeX-safety hard rejects, and an explicit
+   `confirmed_by_user` human override for grounding flags) — the rationale
+   is recorded in that spec; do not port bullet-local rules to letters or
+   vice versa.
+
+Separately, `CODEX_TASK_docker_single_command_setup.md` (also 2026-07-18)
+packages backend + Ollama + TeX into one container so a friend only needs
+Docker Desktop.
+
+### 13.2 Reviewed and rejected (decision, not an oversight)
+
+- **Portal scraping / batch job discovery** — the heart of the reviewed
+  repo, and re-raised this session. Decision: **stays out of scope**,
+  reaffirming §1. Reasons: (a) scraping is a permanent maintenance treadmill
+  against portal DOM/anti-bot changes; (b) it does not serve the stated ATS
+  goal — screening is passed by the quality of one application, not the
+  volume of discovered postings, and the fit score covers "is this posting
+  worth it"; (c) the reviewed repo already does this well — if the user
+  wants scraping, forking that repo alongside this one is cheaper than
+  rebuilding it here.
+- **Interview prep, upskilling plans, salary benchmarking, Notion sync** —
+  ruled out by the user directly this session.
+- **Multi-template system** (`/add-template`) — one user, one resume; no
+  current need.
