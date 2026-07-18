@@ -246,6 +246,47 @@ class ApiTests(unittest.TestCase):
         self.assertIn("CoverLetter_Acme_Engineer.pdf", allowed.headers["content-disposition"])
         self.assertEqual(compile_mock.call_args.kwargs["source_name"], "cover_letter.tex")
 
+    def test_cover_letter_unsafe_draft_paragraph_is_flagged_not_fatal(self):
+        draft = CoverLetterDraftResponse(
+            paragraphs=[
+                LetterParagraph(text="My models achieved 90% accuracy in production."),
+                LetterParagraph(text=r"Unsafe \input{secret} paragraph."),
+            ]
+        )
+        with (
+            patch("backend.app.main.draft_cover_letter", return_value=draft),
+            patch("backend.app.main.threading.Thread") as thread_class,
+        ):
+            def run_immediately():
+                thread_args = thread_class.call_args.kwargs
+                thread_args["target"](*thread_args["args"])
+
+            thread_class.return_value.start.side_effect = run_immediately
+            started = self.client.post(
+                "/cover-letter/start",
+                json={
+                    "job_text": "A sufficiently long machine learning role posting. " * 3,
+                    "company": "Acme",
+                    "role": "Engineer",
+                    "keywords": [
+                        {
+                            "term": "machine learning",
+                            "category": "technology",
+                            "importance": "high",
+                            "evidence": "required",
+                        }
+                    ],
+                },
+                headers=self.headers,
+            )
+        status = self.client.get(
+            f"/cover-letter/status/{started.json()['job_id']}", headers=self.headers
+        )
+        self.assertEqual(status.json()["status"], "done")
+        paragraphs = status.json()["paragraphs"]
+        self.assertEqual(paragraphs[0]["issues"], [])
+        self.assertTrue(any(issue.startswith("unsafe:") for issue in paragraphs[1]["issues"]))
+
     @patch("backend.app.main.compile_tex", return_value=CompileResult(pdf_bytes=b"never"))
     def test_cover_letter_latex_safety_cannot_be_overridden(self, compile_mock):
         response = self.client.post(

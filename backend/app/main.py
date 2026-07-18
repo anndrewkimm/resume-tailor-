@@ -117,17 +117,20 @@ def _run_cover_letter_job(
     try:
         source = _base_resume()
         draft = draft_cover_letter(job_text, company, role, keywords, source)
-        paragraphs = [
-            ReviewedParagraph(
-                text=paragraph.text,
-                issues=validate_letter_paragraph(
+        paragraphs = []
+        for paragraph in draft.paragraphs:
+            # A hard failure in one drafted paragraph must not error the whole
+            # job — flag it so the user can edit that paragraph in review.
+            # /cover-letter/compile still rejects unsafe text with 422.
+            try:
+                issues = validate_letter_paragraph(
                     source, paragraph.text, keywords, company, role
-                ),
-            )
-            for paragraph in draft.paragraphs
-        ]
+                )
+            except LetterValidationError as exc:
+                issues = [f"unsafe: {exc}"]
+            paragraphs.append(ReviewedParagraph(text=paragraph.text, issues=issues))
         update_job(job_id, status="done", paragraphs=paragraphs)
-    except (LLMError, ValidationError, LetterValidationError) as exc:
+    except (LLMError, ValidationError) as exc:
         update_job(job_id, status="error", error=str(exc))
     except Exception as exc:
         update_job(job_id, status="error", error=f"Unexpected error: {exc}")

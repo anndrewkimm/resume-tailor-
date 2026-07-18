@@ -43,11 +43,33 @@ class LetterTests(unittest.TestCase):
         )
         self.assertEqual(issues, [])
 
-    def test_latex_unsafe_text_is_hard_rejected(self):
-        unsafe = ("tab\there", "unbalanced { brace", r"\input{secret}", "raw 50% claim")
+    def test_backslashes_and_controls_are_hard_rejected(self):
+        unsafe = ("tab\there", r"\input{secret}", r"safe until \write18{cmd}")
         for text in unsafe:
             with self.subTest(text=text), self.assertRaises(LetterValidationError):
                 validate_letter_paragraph(SOURCE, text, [], "Acme", "Engineer")
+
+    def test_prose_specials_are_flags_free_and_escaped(self):
+        # Regression for the percent hard-reject bug: the resume's own facts
+        # ("90\% accuracy") must be citable as plain prose in a letter.
+        for text in (
+            "My models achieved 90% accuracy on win/loss classification.",
+            "I contributed to R&D efforts across the data_pipeline work.",
+            "A stray { brace or $5 figure is prose, not LaTeX.",
+        ):
+            with self.subTest(text=text):
+                issues = validate_letter_paragraph(SOURCE, text, [], "Acme", "Engineer")
+                self.assertEqual([issue for issue in issues if "unsafe" in issue], [])
+        rendered = render_letter_tex(
+            "Acme", "Engineer", ["My models achieved 90% accuracy."]
+        )
+        self.assertIn(r"90\% accuracy", rendered)
+
+    def test_ungrounded_number_still_flagged_after_narrowing(self):
+        issues = validate_letter_paragraph(
+            SOURCE, "I improved throughput by 300% last year.", [], "Acme", "Engineer"
+        )
+        self.assertTrue(any("300" in issue for issue in issues))
 
     def test_template_escapes_plain_text_values(self):
         rendered = render_letter_tex("R&D", "C# Engineer", ["Delivered 50% & more_value."])

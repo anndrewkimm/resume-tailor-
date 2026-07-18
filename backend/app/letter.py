@@ -30,24 +30,14 @@ def validate_letter_paragraph(
 ) -> list[str]:
     """Validate model/user prose against resume-global factual grounding."""
     value = text.strip()
+    # Only backslashes (command smuggling, PLAN.md 5.6) and control characters
+    # are hard failures. Braces and %&_#$ are legitimate prose ("90% accuracy",
+    # "R&D") and are fully neutralized by escape_latex before compilation.
     hard_failures: list[str] = []
     if any(ord(char) < 32 for char in value):
         hard_failures.append("contains control characters")
-
-    depth = 0
-    for char in value:
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-        if depth < 0:
-            break
-    if depth != 0:
-        hard_failures.append("contains unbalanced braces")
     if "\\" in value:
         hard_failures.append("contains a forbidden LaTeX command or backslash")
-    if re.search(r"[%&_#$]", value):
-        hard_failures.append("contains an unescaped LaTeX special character")
     if hard_failures:
         raise LetterValidationError("; ".join(hard_failures))
 
