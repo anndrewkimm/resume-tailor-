@@ -931,8 +931,165 @@ Docker Desktop.
   volume of discovered postings, and the fit score covers "is this posting
   worth it"; (c) the reviewed repo already does this well — if the user
   wants scraping, forking that repo alongside this one is cheaper than
-  rebuilding it here.
+  rebuilding it here. **Reopened §15 (2026-08-01)** on narrower grounds
+  (targeting smaller/mid-size companies the popular repos skip, not
+  volume) and a different mechanism (ATS job-board JSON APIs, not HTML
+  scraping) that avoids reason (a); see §15 and
+  `CODEX_TASK_job_discovery.md`. This bullet's reasoning still holds for
+  general portal scraping / LinkedIn-Indeed-style discovery — that stays
+  rejected.
 - **Interview prep, upskilling plans, salary benchmarking, Notion sync** —
   ruled out by the user directly this session.
 - **Multi-template system** (`/add-template`) — one user, one resume; no
   current need.
+
+## 14. Brainstorm session (2026-08-01) — autonomy, email tracking, caching, tooling reps
+
+Four questions raised after ~1 week away from the repo.
+
+### 14.1 Fully autonomous run (no manual popup click) — raised, self-rejected
+
+User considered removing the manual "load extension / click Tailor" step,
+then concluded the manual click is fine. Not pursuing. If revisited, note it
+conflicts with the review-gated-editing design (§0/§2) — a human click is
+also the point where a human is looking at the proposed edits before
+`/compile`.
+
+### 14.2 Resume "caching" across job postings — investigated, mostly a non-issue
+
+User's worry: tailoring resume A, then tailoring resume B right after,
+carries A's changes into B. Checked the actual data flow:
+
+- Backend is already stateless per job: `_base_resume()` (`main.py:46-49`)
+  re-reads `resume.tex` from disk on every `/tailor/start` and `/compile`
+  call and never writes back to it — only `output/Resume_<Company>_<Role>.pdf`
+  is written. So there is no server-side cache to bleed between jobs and
+  **no need for Redis/Postgres/etc. here** — introducing one would add state
+  to a pipeline that is deliberately stateless per request.
+- `extension/background.js:37` (`startTailor`) does clear
+  `tailorResult`/`activeJobId` before starting a new job, so the resume-edit
+  view itself resets correctly.
+- **Real small bug found:** `startTailor` does *not* clear
+  `letterResult`/`activeLetterJobId`. Sequence: tailor job A → draft a cover
+  letter for A → without clicking "New tailor", tailor job B. If the popup
+  is reopened while B is running (or the letter view is revisited), A's
+  stale cover-letter draft can resurface against B's company/role. Fix is
+  small: add those two keys to the `ext.storage.local.remove([...])` call at
+  `background.js:37`, mirroring what `resetTailor()` already does in
+  `popup.js:296-298`. Not yet spec'd or fixed — low priority, cosmetic
+  (never affects the compiled PDF, only what the popup displays).
+
+### 14.3 Dedicated job-search email → auto-updated application tracker — proposed, not yet spec'd
+
+Idea: a separate email address used only for job applications; a poller
+reads it and auto-updates `data/applications.jsonl` (applied confirmation,
+rejection, interview invite, etc.) instead of the user manually running
+`python -m backend.app.tracker outcome ...` (`CODEX_TASK_application_tracker.md`).
+This is a natural extension of already-adopted infra, not a new subsystem —
+`tracker.py`'s `record_outcome`-style folding logic already exists; a poller
+would call it directly instead of the user typing CLI commands.
+
+Open design questions the user needs to resolve before this becomes a spec:
+
+- **Auth mechanism**: Gmail API with a read-only OAuth scope (more setup —
+  Google Cloud project + consent screen — but no stored password) vs. IMAP
+  with an app password (simpler, but a long-lived credential sitting in
+  `.env`). Given §3.2's existing stance on not casually widening credential
+  surface, lean OAuth read-only if the dedicated account is Gmail.
+- **Matching**: inbound emails won't carry the tracker's internal `id` —
+  needs a matching heuristic (company name + recency, since
+  `data/applications.jsonl` already has `company`/`role`/`at` per entry) to
+  attach an "outcome" event to the right `compiled` event.
+- **Classification**: cheap keyword/regex pass first (subject/body contains
+  "interview", "unfortunately", "next steps", etc.); fall back to the local
+  Ollama model already used elsewhere in the pipeline for ambiguous emails
+  rather than adding a new LLM dependency.
+- **Where it runs**: a polling loop is a new always-on process, unlike
+  everything else in this repo which is request-driven — decide whether
+  that's a cron-style scheduled task, a background thread in the existing
+  backend, or a separate script the user runs manually.
+
+### 14.4 Kubernetes / Postgres / Databricks reps — deliberately out of scope here
+
+User is separately interested in getting hands-on reps with heavier
+infrastructure tooling and asked whether this repo is a reasonable place to
+use it. Recommendation: **no for Kubernetes and Databricks, situationally
+yes for Postgres.**
+
+- Kubernetes and Databricks solve distributed-scale problems (multi-node
+  orchestration, big-data pipelines) this project doesn't have and never
+  will at one user / one resume / a local single container
+  (`docker-compose.yml`) — bolting them on adds real maintenance weight
+  against a design whose entire value proposition is "quick, local, low
+  friction" (see the JSONL-over-SQLite reasoning in
+  `CODEX_TASK_application_tracker.md`, which explicitly favors simplicity
+  here). If the goal is reps for their own sake, a separate throwaway
+  project is a better fit than distorting this one's architecture.
+- Postgres is more defensible *if* §14.3's tracker grows past what JSONL
+  comfortably answers (e.g., "how many applications this month by status,"
+  cross-filtering by fit score) — that's a real relational-query use case,
+  not tooling for tooling's sake. Not proposed as a task yet; revisit only
+  if `applications.jsonl` actually becomes awkward to query.
+- **Redis is the one legitimate infra rep already motivated by this repo's
+  own code**, unlike K8s/Databricks: `jobs.py:24-25` holds job state in a
+  plain in-process `dict` behind a `threading.Lock` — state that's lost on
+  any backend restart and can't be shared across worker processes. Swapping
+  that for Redis-backed job state (hash + TTL, or RQ/Celery on top) fixes a
+  real limitation and extends work already scoped in
+  `CODEX_TASK_async_tailor_job.md`. Not spec'd yet — revisit if/when the
+  in-memory job store's restart-loses-state behavior actually bites, or if
+  the user wants the rep regardless.
+
+## 15. Scope pivot — resume tailor + tracker + job finder (2026-08-01)
+
+Later the same session, the user proposed a bigger reframe: don't stay a
+resume-tailor-only tool, become resume tailor + tracker (already exists,
+§14.3-adjacent) + **job finder**. Stated motivation: the popular public
+"tech internship" tracking repos only curate big-name/target-school-pipeline
+companies, which structurally shuts out someone without that pedigree —
+the ask is to surface smaller/mid-size companies those lists skip, not to
+maximize discovered-posting volume.
+
+This **reopens §13.2's twice-recorded scraping rejection**, but on
+narrower, different grounds than what was rejected before (targeting a
+company tier vs. volume-for-its-own-sake) — see
+`CODEX_TASK_job_discovery.md`'s "Why this task exists" section for the
+full reasoning, including the technical unlock that avoids re-triggering
+§13.2's "permanent maintenance treadmill" objection: polling ATS
+platforms' own public job-board JSON APIs (Greenhouse first) instead of
+scraping arbitrary portal HTML. LinkedIn/Indeed-style scraping remains
+out of scope — different risk category (anti-bot, ToS-hostile), not what's
+being proposed here.
+
+Two open design questions were resolved this session:
+
+1. **Company-list sourcing** — user chose "seeded, then curate": bulk-paste
+   an initial list from wherever they find one, then hand-maintain it over
+   time. `companies.json` (repo root, committed, hand-edited) implements
+   this — the task deliberately does not auto-scrape a public list to seed
+   it; that's the user's own input.
+2. **How proactive discovery should be** — user explicitly deferred this
+   one to Claude's judgment ("think about what's best for the user"). Given
+   this repo has no precedent for an always-on daemon (everything is
+   request-driven or CLI-driven, and the tracker task already set a
+   deliberate "CLI only, no new endpoints" precedent for privacy/security
+   reasons), the call: **CLI-driven polling** (`discovery.py poll`) that
+   diffs against previously-seen postings and surfaces only what's new,
+   rather than a full re-browse each time — proactive in effect without
+   requiring a new background-process architecture. True unattended
+   scheduling (run `poll` every N hours without the user thinking about it)
+   is left to the user's own OS task scheduler if/when they want it,
+   consistent with this project's "quick, local, low-friction" posture
+   rather than this codebase managing a daemon's lifecycle. Fit-score
+   integration (reusing the already-adopted `compute_fit`) was added as a
+   separate `score` step so newly discovered postings get ranked, not just
+   listed — direct service of the ATS/quality-over-volume goal even within
+   this new feature.
+
+v1 scope is written up in `CODEX_TASK_job_discovery.md`: Greenhouse only,
+backend + CLI only, zero changes to `main.py`/`security.py`/the extension
+— the bridge to the existing tailor flow is "open the posting's real URL
+in a browser tab, use the extension as today," not a new ingestion path.
+Extension UI (a browsable in-popup list, a badge count) and additional ATS
+platforms (Lever, Ashby, Workable) are explicit fast-follows, not this
+task.
