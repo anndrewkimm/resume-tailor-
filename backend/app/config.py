@@ -12,6 +12,7 @@ RESUME_TEX_PATH = Path(os.environ.get("RESUME_TEX_PATH", REPO_ROOT / "resume.tex
 RESUME_CLS_PATH = Path(os.environ.get("RESUME_CLS_PATH", REPO_ROOT / "resume.cls"))
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", REPO_ROOT / "output"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT / "data"))
+COMPANIES_PATH = Path(os.environ.get("COMPANIES_PATH", REPO_ROOT / "companies.json"))
 
 # Extension origin allowlist (see PLAN.md 3.2) — set the real extension ID
 # once it's loaded unpacked in Chrome (chrome://extensions, dev mode on).

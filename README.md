@@ -11,6 +11,7 @@ A local, review-gated Firefox workflow that reads the job posting in your active
 - Mandatory per-edit review; flagged edits are visible but cannot be selected.
 - Deterministic weighted job-fit scoring, with missing keywords shown before review.
 - Review-gated cover letters with resume-global grounding checks and explicit confirmation for flagged claims.
+- Greenhouse job discovery for a hand-curated list of small/mid-size companies, with local fit scoring and an HTML review report.
 - An append-only local application tracker with outcome recording and a self-contained HTML report.
 - Isolated two-pass `pdflatex -no-shell-escape` compilation, mandatory one-page verification, and named PDF output.
 
@@ -118,6 +119,36 @@ With Docker, prefix the same commands with `docker compose run --rm backend`, fo
 ```powershell
 docker compose run --rm backend python -m backend.app.tracker list
 ```
+
+## Finding postings
+
+Job discovery polls the public Greenhouse boards for companies you choose and stores newly seen postings in the ignored local file `data/discovered_jobs.jsonl`. Edit the committed [`companies.json`](companies.json) to add each company's display name and Greenhouse board slug:
+
+```json
+{
+  "title_keywords": ["intern", "internship", "new grad", "entry level", "entry-level", "junior"],
+  "companies": [
+    {"name": "Example Co", "platform": "greenhouse", "slug": "examplecoinc"}
+  ]
+}
+```
+
+The slug is the board token from a URL such as `https://boards.greenhouse.io/examplecoinc`. Keep `title_keywords` focused on roles you would consider; Greenhouse returns every opening on a board, so omitting the filter can fill the local list with senior and unrelated roles. Matching is whole-word, not substring — `"intern"` alone will not match `"Internal"`/`"International"`, which is why both `"intern"` and `"internship"` are listed (they're different words). An empty or omitted list intentionally accepts every title.
+
+Run discovery and review from PowerShell:
+
+```powershell
+python -m backend.app.discovery poll
+python -m backend.app.discovery score
+python -m backend.app.discovery list --new-only --min-fit 60
+python -m backend.app.discovery dismiss <id-prefix>
+python -m backend.app.discovery tailored <id-prefix>
+python -m backend.app.discovery report
+```
+
+`poll` only fetches and records new postings; `score` separately runs the local Ollama model and deterministic resume fit check for unscored entries. The report is written to `output/discovered_jobs_report.html`. Open a posting URL from the list or report, then use the browser extension normally to tailor the resume; discovery does not bypass the existing review gate.
+
+Polling is manual unless you configure your operating system's task scheduler. This v1 does not infer when a posting has closed, and it intentionally has no extension UI or unauthenticated backend endpoint. With Docker, prefix these commands with `docker compose run --rm backend` as with the tracker commands above.
 
 ## Important behavior
 

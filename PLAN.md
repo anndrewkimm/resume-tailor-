@@ -1109,3 +1109,32 @@ delay between per-company polls, and a `report` command generating
 `output/discovered_jobs_report.html` mirroring the tracker's existing
 report so both features feel like one product. Spec is considered
 implementation-ready as of this pass.
+
+**Implemented and landed, same day.** Codex implemented against the spec
+as of the hardening-pass commit above — before a second round of edits
+made moments later fixed one more bug the implementation had inherited:
+`_title_matches` used plain substring matching, so `"intern"` in
+`title_keywords` false-positived on `"Senior Internal Auditor"` (verified
+against real Greenhouse postings, not hypothetical — `"internal"` and
+`"international"` are true prefix matches for `"intern"`). Fixed to
+whole-word regex matching directly in `backend/app/discovery.py`, added a
+regression test, and also hardened `score_new()` to skip-and-warn on a
+single posting's LLM failure instead of letting one bad posting abort the
+whole scoring run (same defensiveness `poll()` already had per-company).
+All 76 backend tests pass. Ran the real pipeline end-to-end against a
+seeded `companies.json` (27 real, live-verified small/mid-size companies —
+Mercury, Gusto, Checkr, Amplitude, Mixpanel, Chime, Gemini, Vercel,
+Fastly, New Relic, Airtable, Algolia, Pendo, LaunchDarkly, Webflow,
+Contentful, Culture Amp, Betterment, Remote, Netlify, Lattice,
+PlanetScale, Calendly, Sendbird, Honeycomb, PagerDuty, Cockroach Labs):
+`poll` found 7 real open postings on the first run, including an actual
+"Software Engineering Intern (Fall 2026)" at Gemini; `list` and `report`
+both rendered correctly. Feature is live, not just spec'd.
+
+Known pre-existing cosmetic issue, not introduced by this task: the CLI's
+em-dash separator in printed output renders as mojibake in this Windows
+terminal (`tracker.py`'s `list` command has the identical issue already —
+confirmed by comparison). The underlying JSONL data is correctly UTF-8;
+only the console `print()` display is affected. Not fixed — out of scope
+for this task and consistent with an already-shipped feature, not a
+regression.

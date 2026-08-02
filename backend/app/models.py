@@ -3,6 +3,17 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class Company(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    platform: Literal["greenhouse"]
+    slug: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9-]+$")
+
+
+class CompaniesConfig(BaseModel):
+    title_keywords: list[str] = Field(default_factory=list, max_length=50)
+    companies: list[Company] = Field(default_factory=list, max_length=200)
+
+
 class Keyword(BaseModel):
     term: str = Field(min_length=1, max_length=120)
     category: Literal["required", "preferred", "responsibility", "technology"]

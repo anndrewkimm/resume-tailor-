@@ -1,0 +1,32 @@
+{
+  "title_keywords": ["intern", "internship", "new grad", "entry level", "entry-level", "junior"],
+  "companies": [
+    {"name": "Mercury", "platform": "greenhouse", "slug": "mercury"},
+    {"name": "Gusto", "platform": "greenhouse", "slug": "gusto"},
+    {"name": "Checkr", "platform": "greenhouse", "slug": "checkr"},
+    {"name": "Amplitude", "platform": "greenhouse", "slug": "amplitude"},
+    {"name": "Mixpanel", "platform": "greenhouse", "slug": "mixpanel"},
+    {"name": "Chime", "platform": "greenhouse", "slug": "chime"},
+    {"name": "Gemini", "platform": "greenhouse", "slug": "gemini"},
+    {"name": "Vercel", "platform": "greenhouse", "slug": "vercel"},
+    {"name": "Fastly", "platform": "greenhouse", "slug": "fastly"},
+    {"name": "New Relic", "platform": "greenhouse", "slug": "newrelic"},
+    {"name": "Airtable", "platform": "greenhouse", "slug": "airtable"},
+    {"name": "Algolia", "platform": "greenhouse", "slug": "algolia"},
+    {"name": "Pendo", "platform": "greenhouse", "slug": "pendo"},
+    {"name": "LaunchDarkly", "platform": "greenhouse", "slug": "launchdarkly"},
+    {"name": "Webflow", "platform": "greenhouse", "slug": "webflow"},
+    {"name": "Contentful", "platform": "greenhouse", "slug": "contentful"},
+    {"name": "Culture Amp", "platform": "greenhouse", "slug": "cultureamp"},
+    {"name": "Betterment", "platform": "greenhouse", "slug": "betterment"},
+    {"name": "Remote", "platform": "greenhouse", "slug": "remote"},
+    {"name": "Netlify", "platform": "greenhouse", "slug": "netlify"},
+    {"name": "Lattice", "platform": "greenhouse", "slug": "lattice"},
+    {"name": "PlanetScale", "platform": "greenhouse", "slug": "planetscale"},
+    {"name": "Calendly", "platform": "greenhouse", "slug": "calendly"},
+    {"name": "Sendbird", "platform": "greenhouse", "slug": "sendbird"},
+    {"name": "Honeycomb", "platform": "greenhouse", "slug": "honeycomb"},
+    {"name": "PagerDuty", "platform": "greenhouse", "slug": "pagerduty"},
+    {"name": "Cockroach Labs", "platform": "greenhouse", "slug": "cockroachlabs"}
+  ]
+}

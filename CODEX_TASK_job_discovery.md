@@ -76,7 +76,7 @@ codebase.
 
 ```json
 {
-  "title_keywords": ["intern", "new grad", "entry level", "junior", "associate"],
+  "title_keywords": ["intern", "internship", "new grad", "entry level", "entry-level", "junior"],
   "companies": [
     {"name": "Example Co", "platform": "greenhouse", "slug": "examplecoinc"}
   ]
@@ -92,17 +92,28 @@ codebase.
   `Company` model below — that's not just hygiene, it also guarantees the
   value can't smuggle a different host/path into the request URL it gets
   interpolated into.
-- `title_keywords`: case-insensitive substrings matched against each
-  fetched job's `title` during `poll()` (see below). **Why this exists**:
-  a Greenhouse board returns *every* open role at a company — a mid-size
-  company can easily have 100+ postings, nearly all irrelevant (staff
-  engineer, VP of sales, etc.). Without a filter, `discovered_jobs.jsonl`
-  fills with noise and every irrelevant posting also burns an LLM call in
-  `score_new()`. Empty list (or field omitted) means no filtering —
-  matches today's "ingest everything" behavior, so this is opt-in but
-  should be recommended to the user as a near-mandatory setting in
-  practice. Title-only matching for v1 — matching against the description
-  body too is a reasonable future enhancement, not this task.
+- `title_keywords`: **whole-word**, case-insensitive keywords matched
+  against each fetched job's `title` during `poll()` (see `_title_matches`
+  below). **Why this exists**: a Greenhouse board returns *every* open
+  role at a company — a mid-size company can easily have 40-400+ postings,
+  nearly all irrelevant (staff engineer, VP of sales, etc.). Without a
+  filter, `discovered_jobs.jsonl` fills with noise and every irrelevant
+  posting also burns an LLM call in `score_new()`. Empty list (or field
+  omitted) means no filtering — matches today's "ingest everything"
+  behavior, so this is opt-in but should be recommended to the user as a
+  near-mandatory setting in practice. Title-only matching for v1 —
+  matching against the description body too is a reasonable future
+  enhancement, not this task.
+  **Must be whole-word, not plain substring** — verified against real
+  postings while drafting this spec: plain substring matching on `"intern"`
+  false-positives on `"Senior Internal Auditor"` and `"Director, Internal
+  Analysis"` (both contain "intern" as their literal first six letters —
+  `"internal"` and `"international"` are true prefix matches for
+  `"intern"`, not edge-case near-misses). List both `"intern"` and
+  `"internship"` as separate keywords in the default/example above — they
+  don't overlap under whole-word matching (`"internship"` is a distinct
+  word from `"intern"`), so both are needed to catch titles phrased either
+  way.
 - Validate with pydantic models (`Company`, `CompaniesConfig`) next to the
   existing models in `models.py`, matching the rest of the codebase's
   convention of pydantic for all structured data — don't hand-roll dict
@@ -205,8 +216,13 @@ Module half:
 - `read_postings() -> list[dict]` — parse + fold, mirroring
   `tracker._read_events`/`read_applications` (`tracker.py:81-133`).
 - `_title_matches(title: str, keywords: list[str]) -> bool` — `True` if
-  `keywords` is empty (no filter configured) or any keyword is a
-  case-insensitive substring of `title`.
+  `keywords` is empty (no filter configured) or any keyword matches
+  `title` as a **whole word**, case-insensitive
+  (`re.search(rf"\b{re.escape(keyword)}\b", title, re.IGNORECASE)` per
+  keyword). Do not use plain `keyword.lower() in title.lower()` — see the
+  `"intern"`-matches-`"internal"` false positive documented above; it's a
+  real bug that was caught by testing against live postings, not a
+  hypothetical.
 - `poll() -> list[dict]` — load `CompaniesConfig`; for each company, call
   `fetch_greenhouse_jobs`, wrapped in `try/except Exception` that prints a
   stderr warning and continues (one renamed/typo'd slug must not abort the
@@ -307,7 +323,11 @@ being request- or CLI-driven), and no closed-posting detection.
     `seen` events for new ids the second time (no duplicates).
   - `_title_matches`/`poll()` with `title_keywords` set: a job whose title
     doesn't match any keyword is fetched but not recorded; empty
-    `title_keywords` records everything (default-permissive).
+    `title_keywords` records everything (default-permissive); **regression
+    test**: `title_keywords=["intern"]` must NOT match a title like
+    `"Senior Internal Auditor"` (whole-word, not substring — this exact
+    false positive was observed against live data while writing this
+    spec).
   - Also `@patch("backend.app.discovery.time.sleep")` (or monkeypatch the
     module constant to `0`) in every `poll()` test — the real delay must
     not make the suite slow.
