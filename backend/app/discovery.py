@@ -327,7 +327,20 @@ def _list_postings(*, new_only: bool = False, min_fit: int | None = None) -> int
     return 0
 
 
+def _configure_console_encoding() -> None:
+    """Keep third-party job titles printable on Windows consoles."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_console_encoding()
     parser = argparse.ArgumentParser(description="Local small/mid-size job discovery")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("poll", help="poll configured Greenhouse boards")

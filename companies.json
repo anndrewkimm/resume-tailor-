@@ -1,5 +1,5 @@
 {
-  "title_keywords": ["intern", "internship", "new grad", "entry level", "entry-level", "junior"],
+  "title_keywords": ["intern", "internship", "new grad", "graduate", "entry level", "entry-level", "junior", "data analyst"],
   "companies": [
     {"name": "Mercury", "platform": "greenhouse", "slug": "mercury"},
     {"name": "Gusto", "platform": "greenhouse", "slug": "gusto"},
@@ -27,6 +27,11 @@
     {"name": "Sendbird", "platform": "greenhouse", "slug": "sendbird"},
     {"name": "Honeycomb", "platform": "greenhouse", "slug": "honeycomb"},
     {"name": "PagerDuty", "platform": "greenhouse", "slug": "pagerduty"},
-    {"name": "Cockroach Labs", "platform": "greenhouse", "slug": "cockroachlabs"}
+    {"name": "Cockroach Labs", "platform": "greenhouse", "slug": "cockroachlabs"},
+    {"name": "Perpay", "platform": "greenhouse", "slug": "perpay"},
+    {"name": "NewsBreak", "platform": "greenhouse", "slug": "newsbreak"},
+    {"name": "Pipe17", "platform": "greenhouse", "slug": "pipe17"},
+    {"name": "Gotion", "platform": "greenhouse", "slug": "gotion"},
+    {"name": "Alta Resource Technologies", "platform": "greenhouse", "slug": "altaresourcetechnologiesinc"}
   ]
 }

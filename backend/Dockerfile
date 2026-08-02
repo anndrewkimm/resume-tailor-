@@ -13,6 +13,7 @@ RUN apt-get update \
         texlive-fonts-recommended \
         texlive-latex-base \
         texlive-latex-recommended \
+        zstd \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://ollama.com/install.sh | sh

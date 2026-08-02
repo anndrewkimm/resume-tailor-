@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -318,6 +319,14 @@ class DiscoveryTests(unittest.TestCase):
             discovery._list_postings(min_fit=75)
         self.assertIn("High fit", stdout.getvalue())
         self.assertNotIn("Unscored", stdout.getvalue())
+
+    def test_console_streams_are_configured_for_unicode_output(self):
+        stdout = Mock()
+        stderr = Mock()
+        with patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
+            discovery._configure_console_encoding()
+        stdout.reconfigure.assert_called_once_with(encoding="utf-8", errors="backslashreplace")
+        stderr.reconfigure.assert_called_once_with(encoding="utf-8", errors="backslashreplace")
 
 
 if __name__ == "__main__":
