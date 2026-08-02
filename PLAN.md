@@ -1093,3 +1093,19 @@ in a browser tab, use the extension as today," not a new ingestion path.
 Extension UI (a browsable in-popup list, a badge count) and additional ATS
 platforms (Lever, Ashby, Workable) are explicit fast-follows, not this
 task.
+
+**Hardening pass, same day**: before handoff, live-verified the
+Greenhouse board API against five real companies (`greenhouse`, `airbnb`,
+`discord`, `robinhood`, `figma`) — confirmed field shape, and caught a real
+bug the original draft would have shipped with: the `content` field comes
+back HTML-*entity-encoded* (`&lt;div&gt;...` as literal characters), so
+`html.unescape` must run before tag-stripping, not after, or stripping
+silently no-ops. Also added, at the user's explicit invitation to go
+beyond the original ask: a `title_keywords` filter in `companies.json`
+(a Greenhouse board returns every open role, not just internships —
+without filtering, small/mid company boards would flood the log with
+irrelevant senior postings and burn LLM calls scoring them), a politeness
+delay between per-company polls, and a `report` command generating
+`output/discovered_jobs_report.html` mirroring the tracker's existing
+report so both features feel like one product. Spec is considered
+implementation-ready as of this pass.

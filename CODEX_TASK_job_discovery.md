@@ -47,7 +47,9 @@ this task should make unilaterally.
 - New: `backend/app/discovery.py` (module + CLI), `companies.json` (repo
   root, committed — NOT gitignored, this is a curated list, not personal
   application history), `data/discovered_jobs.jsonl` (gitignored, already
-  covered by the existing `data/` rule in `.gitignore`).
+  covered by the existing `data/` rule in `.gitignore`),
+  `output/discovered_jobs_report.html` (generated, already covered by the
+  existing `output/*` rule).
 - Edited: `backend/app/config.py` (one new path constant), `README.md`
   (short new section, mirroring the existing "Tracking applications"
   section's style), `requirements.txt` only if a new dependency turns out
@@ -64,15 +66,21 @@ this task should make unilaterally.
 
 ### `companies.json` (repo root, hand-curated, committed)
 
-A flat JSON array, meant to be hand-edited over time (the user's own
-words: "seeded, then I curate"). Seeding it initially (pasting in company
-names/slugs found elsewhere) is the user's job, not this task's — do not
-invent or hardcode any real company slugs into the codebase.
+An object, not a flat array — v1 needs one global setting alongside the
+company list (see `title_keywords` below), and nesting it now avoids a
+breaking format change later. Meant to be hand-edited over time (the
+user's own words: "seeded, then I curate"). Seeding it initially (pasting
+in company names/slugs found elsewhere) is the user's job, not this
+task's — do not invent or hardcode any real company slugs into the
+codebase.
 
 ```json
-[
-  {"name": "Example Co", "platform": "greenhouse", "slug": "examplecoinc"}
-]
+{
+  "title_keywords": ["intern", "new grad", "entry level", "junior", "associate"],
+  "companies": [
+    {"name": "Example Co", "platform": "greenhouse", "slug": "examplecoinc"}
+  ]
+}
 ```
 
 - `platform`: `Literal["greenhouse"]` for v1 — reject anything else at load
@@ -80,13 +88,28 @@ invent or hardcode any real company slugs into the codebase.
   it (this file is hand-edited; a typo should be loud).
 - `slug`: the Greenhouse board token (the `{board_token}` in the API URL
   above — for a company at `https://boards.greenhouse.io/examplecoinc`,
-  the slug is `examplecoinc`).
-- Validate with a pydantic model (`Company`) next to the existing models in
-  `models.py`, matching the rest of the codebase's convention of pydantic
-  for all structured data — don't hand-roll dict validation here.
-- Missing file → empty list with a one-line stderr note ("no companies.json
-  found — see README"), not a crash; this file won't exist until the user
-  creates it.
+  the slug is `examplecoinc`). Constrained to `^[A-Za-z0-9-]+$` by the
+  `Company` model below — that's not just hygiene, it also guarantees the
+  value can't smuggle a different host/path into the request URL it gets
+  interpolated into.
+- `title_keywords`: case-insensitive substrings matched against each
+  fetched job's `title` during `poll()` (see below). **Why this exists**:
+  a Greenhouse board returns *every* open role at a company — a mid-size
+  company can easily have 100+ postings, nearly all irrelevant (staff
+  engineer, VP of sales, etc.). Without a filter, `discovered_jobs.jsonl`
+  fills with noise and every irrelevant posting also burns an LLM call in
+  `score_new()`. Empty list (or field omitted) means no filtering —
+  matches today's "ingest everything" behavior, so this is opt-in but
+  should be recommended to the user as a near-mandatory setting in
+  practice. Title-only matching for v1 — matching against the description
+  body too is a reasonable future enhancement, not this task.
+- Validate with pydantic models (`Company`, `CompaniesConfig`) next to the
+  existing models in `models.py`, matching the rest of the codebase's
+  convention of pydantic for all structured data — don't hand-roll dict
+  validation here.
+- Missing file → `CompaniesConfig(title_keywords=[], companies=[])` with a
+  one-line stderr note ("no companies.json found — see README"), not a
+  crash; this file won't exist until the user creates it.
 
 ### `data/discovered_jobs.jsonl` (gitignored, machine-written)
 
@@ -134,30 +157,46 @@ class Company(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     platform: Literal["greenhouse"]
     slug: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9-]+$")
+
+
+class CompaniesConfig(BaseModel):
+    title_keywords: list[str] = Field(default_factory=list, max_length=50)
+    companies: list[Company] = Field(default_factory=list, max_length=200)
 ```
 
 ### 3. New file: `backend/app/discovery.py`
 
 Module half:
 
-- `load_companies() -> list[Company]` — reads `config.COMPANIES_PATH`,
-  parses JSON, validates each entry as `Company`; missing file returns
-  `[]` with the stderr note above; a malformed entry raises with the
-  offending index/name in the message (loud, per the "hand-edited, typos
-  should surface" reasoning above).
+- `load_companies_config() -> CompaniesConfig` — reads
+  `config.COMPANIES_PATH`, parses JSON, validates as `CompaniesConfig`;
+  missing file returns the empty default with the stderr note above; a
+  validation error re-raises with the offending index/field named in the
+  message (loud, per the "hand-edited, typos should surface" reasoning
+  above — pydantic's own `ValidationError` message is usually enough,
+  don't swallow it into something vaguer).
 - `fetch_greenhouse_jobs(slug: str) -> list[dict]` — `httpx.Client` GET to
   `https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true`,
   10s timeout, matching the timeout discipline already used for the Ollama
-  client in `llm.py`. Returns the parsed `jobs` array. **Before finalizing
-  the field-name assumptions below, hit the live endpoint for 2-3 real
-  Greenhouse company slugs and confirm the response shape** — this task's
-  author is working from Greenhouse's documented/publicly-known board-API
-  shape, not a verified-today response, and Greenhouse controls this
-  contract. Expected shape per job: `id` (external id), `title`,
-  `location.name`, `absolute_url`, `content` (HTML description).
-- `_strip_html(content: str) -> str` — minimal regex-based tag strip
-  (`re.sub(r"<[^>]+>", " ", content)`) plus `html.unescape`, then collapse
-  whitespace; cap at `config.MAX_JOB_TEXT_CHARS` (reuse the existing
+  client in `llm.py`. Returns the parsed `jobs` array. **Verified live
+  2026-08-01** against five real boards (`greenhouse`, `airbnb`, `discord`,
+  `robinhood`, `figma` all returned 200 with this shape; `doordash` 404'd —
+  not every guessed slug resolves, expect misses in whatever list gets
+  seeded). Confirmed per-job fields: `id` (int, external id), `title`,
+  `location.name`, `absolute_url`, `updated_at`, `content` (string — see
+  the entity-encoding note below). No auth needed; do not re-spend time
+  re-verifying this shape, it's confirmed current as of this task.
+- `_strip_html(content: str) -> str` — **order matters and was verified
+  against a real response**: Greenhouse's `content` field is HTML that has
+  already been HTML-entity-encoded before being placed in the JSON string
+  — a real value looks like `&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;...`
+  literally (i.e. after `json.loads`, the Python string still contains
+  `&lt;`/`&gt;`/`&quot;` as characters, not `<`/`>`/`"`). Call
+  `html.unescape()` **first** to turn that back into real markup, *then*
+  regex-strip tags (`re.sub(r"<[^>]+>", " ", unescaped)`), then collapse
+  whitespace. Stripping tags before unescaping is a silent no-op bug — the
+  regex won't match anything because the string doesn't contain literal
+  `<`/`>` yet. Cap at `config.MAX_JOB_TEXT_CHARS` (reuse the existing
   constant from `config.py:26`, same cap `_check_job_size` enforces in
   `main.py`). Don't add an HTML-parsing dependency for this — a regex
   strip is adequate for feeding the LLM keyword extractor, it doesn't need
@@ -165,14 +204,24 @@ Module half:
 - `record_seen(*, id, company, role, location, url, platform, description) -> None` and `record_status(id, status) -> None` and `record_fit(id, *, fit_score, keywords_total, keywords_matched) -> None` — append-only writers, same `threading.Lock` + `config.DATA_DIR` pattern as `tracker.py:15,22-25` (new file: `data/discovered_jobs.jsonl`, separate from `applications.jsonl` — these are prospective postings, not the user's application history, and conflating the two files would break the tracker's existing read path).
 - `read_postings() -> list[dict]` — parse + fold, mirroring
   `tracker._read_events`/`read_applications` (`tracker.py:81-133`).
-- `poll() -> list[dict]` — for each company from `load_companies()`, call
-  `fetch_greenhouse_jobs`; wrap each company's fetch in
-  `try/except Exception` that prints a stderr warning and continues (one
-  renamed/typo'd slug must not abort the whole poll — same defensiveness
-  as the tracker's malformed-line handling). For each returned job whose
-  id isn't already in `read_postings()`, call `record_seen(...)` and
-  collect it. Return the list of newly seen postings (this is what makes
-  a poll run "show me only what's new" instead of a full re-browse).
+- `_title_matches(title: str, keywords: list[str]) -> bool` — `True` if
+  `keywords` is empty (no filter configured) or any keyword is a
+  case-insensitive substring of `title`.
+- `poll() -> list[dict]` — load `CompaniesConfig`; for each company, call
+  `fetch_greenhouse_jobs`, wrapped in `try/except Exception` that prints a
+  stderr warning and continues (one renamed/typo'd slug must not abort the
+  whole poll — same defensiveness as the tracker's malformed-line
+  handling). Sleep `_POLL_DELAY_SECONDS` (module constant, `0.3`) between
+  companies — this is polling someone else's shared API on a schedule the
+  user controls, not a one-off request; a small delay is basic courtesy
+  and cheap insurance against being rate-limited. For each returned job
+  that passes `_title_matches` and whose id isn't already in
+  `read_postings()`, call `record_seen(...)` and collect it. Return the
+  list of newly seen postings (this is what makes a poll run "show me only
+  what's new" instead of a full re-browse). Interrupting a poll partway
+  through is safe — `record_seen` appends one line at a time, so a killed
+  process just means the next `poll()` picks up wherever it left off, no
+  partial-state cleanup needed.
 - `score_new() -> list[dict]` — for postings with a `seen` event but no
   `fit` event yet, call `extract_keywords` (`llm.py`) on the description,
   then `compute_fit` (`fit.py`) against the same base-resume read
@@ -182,7 +231,22 @@ Module half:
   `record_fit(...)`. **Deliberately a separate step from `poll`**, not
   folded into it: polling should stay fast and always-succeed (no LLM
   calls); scoring is slower (local Ollama call per posting) and is where a
-  model hiccup should be retryable without re-polling.
+  model hiccup should be retryable without re-polling. Same
+  interrupt-safety as `poll()` — each posting's `fit` event is written as
+  soon as it's scored, so a killed run just leaves the remainder unscored
+  for the next invocation.
+- `generate_report(output_path: Path | None = None) -> Path` — writes
+  `output/discovered_jobs_report.html`: self-contained inline CSS, no
+  external assets, same visual style as
+  `tracker.generate_report` (`tracker.py:167-200`) so the two reports feel
+  like one product. Table columns: date first seen, company, role (as a
+  real `<a href="...">` link to the posting), location, fit score (`—` if
+  unscored), status. Sort by fit score descending (unscored last), then by
+  date. **`html.escape` every field, including the URL used as the `href`
+  attribute** — company name, title, and location here come straight from
+  a third-party API response, not from this project's own LLM-review
+  pipeline, so treat them as at least as untrusted as the tracker's
+  LLM-derived strings already are treated.
 
 CLI half (`python -m backend.app.discovery <subcommand>`, argparse,
 `if __name__ == "__main__":` — same shape as `tracker.py:213-238`):
@@ -202,6 +266,8 @@ CLI half (`python -m backend.app.discovery <subcommand>`, argparse,
   listing the matches. Write this as a local helper in `discovery.py`;
   don't import it from `tracker.py` — the two modules should stay
   independent (different entity, no reason to couple them).
+- `report` — runs `generate_report()`, prints the output path (mirrors
+  `tracker.py`'s `report` subcommand exactly, `tracker.py:229-231`).
 
 ### 4. `.gitignore`
 
@@ -211,10 +277,12 @@ Confirm `companies.json` at repo root is not caught by any existing rule
 
 ### 5. `README.md`
 
-Short "Finding postings" section: what `companies.json` is and its format,
-the four CLI commands, and the "open the posting URL, then use the
-extension as normal" bridge to the existing tailor flow. Note the
-non-goals explicitly: no automatic scheduling (the user runs `poll`
+Short "Finding postings" section: what `companies.json` is and its format
+(including `title_keywords` and why it matters — without it the list fills
+with irrelevant senior roles), the five CLI commands (`poll`, `score`,
+`list`, `dismiss`/`tailored`, `report`), and the "open the posting URL,
+then use the extension as normal" bridge to the existing tailor flow. Note
+the non-goals explicitly: no automatic scheduling (the user runs `poll`
 manually or wires it to their OS's own task scheduler — this project
 doesn't manage a background daemon, consistent with everything else here
 being request- or CLI-driven), and no closed-posting detection.
@@ -223,32 +291,49 @@ being request- or CLI-driven), and no closed-posting detection.
 
 - Unit tests (unittest style, in `backend/tests/`, new file
   `test_discovery.py`):
-  - `load_companies` parses a valid file, rejects an unknown `platform`
-    with a clear error, returns `[]` for a missing file.
+  - `load_companies_config` parses a valid file, rejects an unknown
+    `platform` with a clear error, returns the empty default for a
+    missing file.
   - Mock `httpx.Client` the same way `test_llm.py:20` does
-    (`@patch("backend.app.discovery.httpx.Client")`) — `fetch_greenhouse_jobs`
-    parses a representative fixture response into the expected job dicts;
+    (`@patch("backend.app.discovery.httpx.Client")`) — use a fixture
+    response shaped like the real one confirmed above (include the
+    entity-encoded `content` field in the fixture, don't simplify it away,
+    or the `_strip_html` order bug wouldn't have been caught by this
+    suite). `fetch_greenhouse_jobs` parses it into the expected job dicts;
     a non-200 response or connection error is caught in `poll()` (assert
     it's logged to stderr and other companies still get polled — use two
     companies in the fixture, one that fails).
   - `poll()` run twice against the same mocked response only appends
     `seen` events for new ids the second time (no duplicates).
+  - `_title_matches`/`poll()` with `title_keywords` set: a job whose title
+    doesn't match any keyword is fetched but not recorded; empty
+    `title_keywords` records everything (default-permissive).
+  - Also `@patch("backend.app.discovery.time.sleep")` (or monkeypatch the
+    module constant to `0`) in every `poll()` test — the real delay must
+    not make the suite slow.
   - `record_status`/`record_fit` then `read_postings()` round-trips and
     folds correctly; two `status` events → last wins.
   - A malformed line in `discovered_jobs.jsonl` is skipped, remaining
     lines still parse.
   - `dismiss`/`tailored` CLI id-prefix resolution: unique prefix works,
     ambiguous prefix errors.
-  - `_strip_html` strips tags and unescapes entities from a fixture
-    string.
+  - `_strip_html`: given the real entity-encoded fixture content, returns
+    clean plain text (assert no `&lt;`/`&gt;`/`<`/`>` survive).
+  - `generate_report`: output contains expected rows, and a company/title
+    fixture containing `<script>alert(1)</script>` appears escaped both in
+    the cell text and if used as part of a URL.
   - Same test isolation pattern as `test_tracker.py:11-19`: monkeypatch
     `config.DATA_DIR` (and `config.COMPANIES_PATH`) to a
     `tempfile.TemporaryDirectory` for every test — never let a test run
     write the real `companies.json` or `data/discovered_jobs.jsonl`.
 - `python -m unittest discover -s backend/tests -v` passes; a test run
-  leaves the real repo's `data/` and `companies.json` untouched.
-- Manual smoke check (not part of the automated suite, note in the PR/task
-  notes instead): run `poll` against 2-3 real Greenhouse company slugs the
-  user provides, confirm the response shape matches what
-  `fetch_greenhouse_jobs` expects, and adjust field names if Greenhouse's
-  live API differs from the assumed shape above.
+  leaves the real repo's `data/`, `companies.json`, and
+  `output/discovered_jobs_report.html` untouched.
+- The Greenhouse response shape used above (`id`, `title`, `location.name`,
+  `absolute_url`, `updated_at`, entity-encoded `content`) was verified live
+  on 2026-08-01 against five real company boards — this does not need
+  re-verification before implementing. The one thing that *does* still
+  need a real run, once the user has put real company slugs in
+  `companies.json`: run `poll` for real and sanity-check the volume/
+  relevance of what comes back, then tune `title_keywords` accordingly —
+  that's a content-tuning step, not a correctness check.
