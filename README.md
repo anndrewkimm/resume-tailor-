@@ -184,7 +184,9 @@ python -m backend.app.email_tracker confirm <id-prefix>
 python -m backend.app.email_tracker dismiss <id-prefix>
 ```
 
-`poll` searches only the last 180 days, skips Gmail message IDs already seen locally, uses explicit status phrases before falling back to the loopback-only Ollama model, and matches only a literal tracked company name. Classified messages without a confident application match are recorded as unmatched for manual handling with `python -m backend.app.tracker outcome`; they are never guessed onto an application. Polling is CLI-driven, not a daemon. `confirm` is the only email-tracker command that writes an outcome to `applications.jsonl`.
+`poll` searches only the last 180 days, skips Gmail message IDs already seen locally, uses explicit status phrases before falling back to the loopback-only Ollama model, and matches only a literal tracked company name. An `applied` confirmation with no matching row becomes a **NEW APPLICATION** suggestion; confirming it creates a row with status `applied`, no fit score, and no generated resume. Other unmatched statuses remain unmatched and are never guessed onto an application. Polling is CLI-driven, not a daemon, and `confirm` remains the only email-tracker command that writes to `applications.jsonl`.
+
+If you later tailor and compile for the same company and role, the tracker records a second row. The append-only logs intentionally do not attempt fuzzy merging or automatic deduplication.
 
 ## Unified job-search digest
 

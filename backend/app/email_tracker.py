@@ -18,7 +18,7 @@ from . import config, llm, tracker
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_QUERY = "newer_than:180d"
-_EMAIL_OUTCOMES = {"screen", "interview", "offer", "rejected"}
+_EMAIL_OUTCOMES = {"applied", "screen", "interview", "offer", "rejected"}
 _KEYWORD_RULES: list[tuple[str, re.Pattern]] = [
     (
         "offer",
@@ -44,6 +44,14 @@ _KEYWORD_RULES: list[tuple[str, re.Pattern]] = [
         "screen",
         re.compile(
             r"\b(phone screen|recruiter (?:screen|call)|initial (?:screening|call))\b",
+            re.I,
+        ),
+    ),
+    (
+        "applied",
+        re.compile(
+            r"\b(thank you for applying|thanks for applying|(?:we|we've|we have) received your application|"
+            r"your application (?:has been|was) (?:received|submitted)|thank you for your interest in)\b",
             re.I,
         ),
     ),
@@ -225,7 +233,7 @@ def _find_matching_application(
     candidates = []
     for application in applications:
         company = str(application.get("company") or "").strip().lower()
-        if application.get("event") != "compiled" or not company:
+        if application.get("event") not in {"compiled", "applied"} or not company:
             continue
         if re.search(rf"(?<!\w){re.escape(company)}(?!\w)", haystack):
             candidates.append(application)
@@ -268,12 +276,38 @@ def _record_suggested(
 ) -> dict:
     event = {
         "event": "suggested",
+        "kind": "outcome",
         "id": message_id,
         "at": _timestamp(),
         "application_id": str(application["id"]),
         "company": str(application.get("company", "")),
         "role": str(application.get("role", "")),
         "status": status,
+        "evidence": evidence[:200],
+        "sender": sender,
+        "subject": subject,
+    }
+    _append_event(event)
+    return event
+
+
+def _record_new_application_suggestion(
+    message_id: str,
+    *,
+    company: str,
+    role: str,
+    evidence: str,
+    sender: str,
+    subject: str,
+) -> dict:
+    event = {
+        "event": "suggested",
+        "kind": "new_application",
+        "id": message_id,
+        "at": _timestamp(),
+        "company": company,
+        "role": role,
+        "status": "applied",
         "evidence": evidence[:200],
         "sender": sender,
         "subject": subject,
@@ -333,7 +367,21 @@ def poll() -> list[dict]:
             extracted["body"],
             applications,
         )
-        if application is None:
+        if application is None and status == "applied":
+            company, role = llm.extract_application_details(
+                extracted["subject"],
+                extracted["body"],
+                extracted["sender"],
+            )
+            event = _record_new_application_suggestion(
+                message_id,
+                company=company,
+                role=role,
+                evidence=evidence,
+                sender=extracted["sender"],
+                subject=extracted["subject"],
+            )
+        elif application is None:
             event = _record_unmatched(
                 message_id,
                 status=status,
@@ -374,10 +422,17 @@ def _resolve_suggestion(identifier: str, suggestions: list[dict]) -> dict:
 
 def confirm_suggestion(identifier: str) -> str:
     suggestion = _resolve_suggestion(identifier, pending_suggestions())
-    tracker.record_outcome(
-        str(suggestion["application_id"]),
-        str(suggestion["status"]),
-    )
+    if suggestion.get("kind") == "new_application":
+        tracker.record_applied(
+            company=str(suggestion.get("company", "Company")),
+            role=str(suggestion.get("role", "Role")),
+            note="Detected from an email confirmation.",
+        )
+    else:
+        tracker.record_outcome(
+            str(suggestion["application_id"]),
+            str(suggestion["status"]),
+        )
     suggestion_id = str(suggestion["id"])
     _append_event({"event": "confirmed", "id": suggestion_id, "at": _timestamp()})
     return suggestion_id
@@ -396,9 +451,14 @@ def _list_pending() -> int:
         print("No pending email suggestions.")
         return 0
     for suggestion in suggestions:
+        label = (
+            "NEW APPLICATION"
+            if suggestion.get("kind") == "new_application"
+            else suggestion.get("status", "")
+        )
         print(
             f"{str(suggestion['id'])[:12]}  {suggestion.get('company', '')} — "
-            f"{suggestion.get('role', '')}  {suggestion.get('status', '')}  "
+            f"{suggestion.get('role', '')}  {label}  "
             f"{str(suggestion.get('evidence', ''))[:200]}"
         )
     return 0

@@ -78,6 +78,21 @@ def record_letter(*, company: str, role: str, filename: str) -> str:
     return application_id
 
 
+def record_applied(*, company: str, role: str, note: str = "") -> str:
+    application_id = uuid.uuid4().hex
+    _append_event(
+        {
+            "event": "applied",
+            "id": application_id,
+            "at": _timestamp(),
+            "company": company,
+            "role": role,
+            "note": note,
+        }
+    )
+    return application_id
+
+
 def _read_events() -> list[dict]:
     path = _events_path()
     if not path.is_file():
@@ -126,6 +141,23 @@ def read_applications() -> list[dict]:
                     "note": "",
                 }
             applications[application_id]["cover_letter_filename"] = event.get("filename", "")
+        elif kind == "applied":
+            if application_id not in applications:
+                order.append(application_id)
+            applications[application_id] = {
+                "event": "applied",
+                "id": application_id,
+                "at": event.get("at", ""),
+                "company": event.get("company", "Company"),
+                "role": event.get("role", "Role"),
+                "filename": "",
+                "edits_applied": 0,
+                "fit_score": None,
+                "keywords_total": None,
+                "keywords_matched": None,
+                "status": "applied",
+                "note": event.get("note", ""),
+            }
         elif kind == "outcome" and application_id in applications:
             applications[application_id]["status"] = event.get("status", applications[application_id]["status"])
             applications[application_id]["note"] = event.get("note", "")
@@ -134,12 +166,14 @@ def read_applications() -> list[dict]:
 
 
 def _resolve_application(identifier: str, applications: list[dict]) -> dict:
-    compiled = [item for item in applications if item.get("event") == "compiled"]
-    if not compiled:
+    tracked = [
+        item for item in applications if item.get("event") in {"compiled", "applied"}
+    ]
+    if not tracked:
         raise ValueError("no tracked applications")
     if identifier == "latest":
-        return compiled[-1]
-    matches = [item for item in compiled if str(item["id"]).startswith(identifier)]
+        return tracked[-1]
+    matches = [item for item in tracked if str(item["id"]).startswith(identifier)]
     if not matches:
         raise ValueError(f"no application matches id prefix '{identifier}'")
     if len(matches) > 1:

@@ -40,6 +40,31 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(application["fit_score"], 78)
         self.assertEqual(application["status"], "compiled")
 
+    def test_applied_events_create_distinct_rows_that_can_advance(self):
+        first_id = tracker.record_applied(
+            company="Acme",
+            role="Engineer",
+            note="Detected from an email confirmation.",
+        )
+        second_id = tracker.record_applied(company="Other Co", role="Analyst")
+
+        applications = tracker.read_applications()
+
+        self.assertEqual([item["id"] for item in applications], [first_id, second_id])
+        self.assertEqual(applications[0]["company"], "Acme")
+        self.assertEqual(applications[0]["role"], "Engineer")
+        self.assertEqual(applications[0]["status"], "applied")
+        self.assertEqual(applications[0]["note"], "Detected from an email confirmation.")
+        self.assertEqual(applications[0]["filename"], "")
+        self.assertEqual(applications[0]["edits_applied"], 0)
+        self.assertIsNone(applications[0]["fit_score"])
+
+        tracker.record_outcome(first_id[:8], "interview", "Recruiter interview")
+        updated = tracker.read_applications()
+        self.assertEqual(updated[0]["status"], "interview")
+        self.assertEqual(updated[0]["note"], "Recruiter interview")
+        self.assertEqual(updated[1]["status"], "applied")
+
     def test_last_outcome_wins(self):
         application_id = self.record()
         tracker.record_outcome(application_id[:8], "screen", "phone screen")

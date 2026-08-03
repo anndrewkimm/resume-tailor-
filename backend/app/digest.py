@@ -193,7 +193,11 @@ def _suggestion_rows(suggestions: list[dict]) -> str:
         suggestion_id = html.escape(str(item.get("id", ""))[:12])
         company = html.escape(str(item.get("company", "")))
         role = html.escape(str(item.get("role", "")))
-        status = html.escape(str(item.get("status", "")).title())
+        status = (
+            "NEW APPLICATION"
+            if item.get("kind") == "new_application"
+            else html.escape(str(item.get("status", "")).title())
+        )
         evidence = html.escape(str(item.get("evidence", ""))[:200])
         command = f"python -m backend.app.email_tracker confirm {suggestion_id}"
         rows.append(

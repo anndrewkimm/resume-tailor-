@@ -120,6 +120,7 @@ class EmailTrackerTests(unittest.TestCase):
             "interview": "Please schedule an interview with our team.",
             "rejected": "Unfortunately, we are pursuing other candidates.",
             "screen": "Let's arrange an initial screening next week.",
+            "applied": "Thank you for applying. We received your application.",
         }
         with patch("backend.app.email_tracker.llm.classify_application_email") as classify:
             for expected, body in examples.items():
@@ -128,6 +129,12 @@ class EmailTrackerTests(unittest.TestCase):
                     self.assertEqual(status, expected)
                     self.assertIn("Keyword match", evidence)
             classify.assert_not_called()
+
+        status, _ = email_tracker._classify_email(
+            "Application update",
+            "Thank you for your interest in us. Unfortunately, we are not moving forward.",
+        )
+        self.assertEqual(status, "rejected")
 
     def test_local_model_fallback_result_is_used_and_unrelated_is_ignored(self):
         with patch(
@@ -315,6 +322,161 @@ class EmailTrackerTests(unittest.TestCase):
         serialized = (config.DATA_DIR / "email_suggestions.jsonl").read_text(encoding="utf-8")
         self.assertNotIn("We are pleased to offer you the role", serialized)
         self.assertNotIn("company news", serialized)
+
+    def test_applied_email_with_match_stages_normal_outcome(self):
+        application_id = self.record_application()
+        service = Mock()
+        messages = service.users.return_value.messages.return_value
+        messages.list.return_value.execute.return_value = {
+            "messages": [{"id": "matched-applied"}]
+        }
+        request = Mock()
+        request.execute.return_value = gmail_message(
+            "jobs@acme.com",
+            "Acme application received",
+            "Thank you for applying to Acme.",
+        )
+        messages.get.return_value = request
+
+        with (
+            patch("backend.app.email_tracker._gmail_service", return_value=service),
+            patch("backend.app.email_tracker.llm.extract_application_details") as extract,
+        ):
+            [event] = email_tracker.poll()
+
+        self.assertEqual(event["kind"], "outcome")
+        self.assertEqual(event["application_id"], application_id)
+        self.assertEqual(event["status"], "applied")
+        extract.assert_not_called()
+        with patch("backend.app.email_tracker.tracker.record_outcome") as record_outcome:
+            email_tracker.confirm_suggestion("matched")
+        record_outcome.assert_called_once_with(application_id, "applied")
+
+    def test_unmatched_applied_email_stages_new_application_suggestion(self):
+        service = Mock()
+        messages = service.users.return_value.messages.return_value
+        messages.list.return_value.execute.return_value = {
+            "messages": [{"id": "new-application"}]
+        }
+        request = Mock()
+        request.execute.return_value = gmail_message(
+            "jobs@outside.example",
+            "Application received",
+            "Thank you for applying for the Platform Engineer role.",
+        )
+        messages.get.return_value = request
+
+        with (
+            patch("backend.app.email_tracker._gmail_service", return_value=service),
+            patch(
+                "backend.app.email_tracker.llm.extract_application_details",
+                return_value=("Outside Co", "Platform Engineer"),
+            ) as extract,
+        ):
+            [event] = email_tracker.poll()
+
+        self.assertEqual(event["event"], "suggested")
+        self.assertEqual(event["kind"], "new_application")
+        self.assertEqual(event["company"], "Outside Co")
+        self.assertEqual(event["role"], "Platform Engineer")
+        self.assertEqual(event["status"], "applied")
+        extract.assert_called_once_with(
+            "Application received",
+            "Thank you for applying for the Platform Engineer role.",
+            "jobs@outside.example",
+        )
+        [pending] = email_tracker.pending_suggestions()
+        self.assertEqual(pending["kind"], "new_application")
+
+    def test_confirm_new_application_persists_row_and_future_match(self):
+        email_tracker._record_new_application_suggestion(
+            "create123",
+            company="Outside Co",
+            role="Platform Engineer",
+            evidence="Keyword match",
+            sender="jobs@outside.example",
+            subject="Application received",
+        )
+        self.assertEqual(tracker.read_applications(), [])
+
+        with patch("backend.app.email_tracker.tracker.record_outcome") as record_outcome:
+            confirmed_id = email_tracker.confirm_suggestion("create")
+
+        self.assertEqual(confirmed_id, "create123")
+        record_outcome.assert_not_called()
+        [application] = tracker.read_applications()
+        self.assertEqual(application["company"], "Outside Co")
+        self.assertEqual(application["role"], "Platform Engineer")
+        self.assertEqual(application["status"], "applied")
+        self.assertIsNone(application["fit_score"])
+        self.assertEqual(application["note"], "Detected from an email confirmation.")
+        self.assertEqual(email_tracker.pending_suggestions(), [])
+        matched = email_tracker._find_matching_application(
+            "recruiting@outside.example",
+            "Outside Co interview update",
+            "",
+            tracker.read_applications(),
+        )
+        self.assertEqual(matched["id"], application["id"])
+
+    def test_legacy_outcome_suggestion_without_kind_still_confirms(self):
+        application_id = self.record_application()
+        email_tracker._append_event(
+            {
+                "event": "suggested",
+                "id": "legacy123",
+                "at": "2026-08-02T00:00:00+00:00",
+                "application_id": application_id,
+                "company": "Acme",
+                "role": "Engineer",
+                "status": "screen",
+                "evidence": "Legacy suggestion",
+            }
+        )
+
+        with patch("backend.app.email_tracker.tracker.record_outcome") as record_outcome:
+            email_tracker.confirm_suggestion("legacy")
+
+        record_outcome.assert_called_once_with(application_id, "screen")
+
+    def test_unmatched_non_applied_email_never_creates_application(self):
+        service = Mock()
+        messages = service.users.return_value.messages.return_value
+        messages.list.return_value.execute.return_value = {
+            "messages": [{"id": "unmatched-rejection"}]
+        }
+        request = Mock()
+        request.execute.return_value = gmail_message(
+            "jobs@outside.example",
+            "Application update",
+            "Unfortunately, we are not moving forward.",
+        )
+        messages.get.return_value = request
+
+        with (
+            patch("backend.app.email_tracker._gmail_service", return_value=service),
+            patch("backend.app.email_tracker.llm.extract_application_details") as extract,
+        ):
+            [event] = email_tracker.poll()
+
+        self.assertEqual(event["event"], "unmatched")
+        extract.assert_not_called()
+        self.assertEqual(tracker.read_applications(), [])
+        self.assertEqual(email_tracker.pending_suggestions(), [])
+
+    def test_pending_list_labels_new_application_suggestions(self):
+        email_tracker._record_new_application_suggestion(
+            "list123",
+            company="Outside Co",
+            role="Platform Engineer",
+            evidence="Keyword match",
+            sender="jobs@outside.example",
+            subject="Application received",
+        )
+        with patch("builtins.print") as output:
+            result = email_tracker._list_pending()
+        self.assertEqual(result, 0)
+        self.assertIn("NEW APPLICATION", output.call_args.args[0])
 
     def test_classifier_failure_does_not_mark_message_seen_so_poll_can_retry(self):
         service = Mock()

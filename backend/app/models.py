@@ -35,7 +35,12 @@ class DiscoveryStatusRequest(BaseModel):
 
 
 class EmailClassificationResponse(BaseModel):
-    status: Literal["screen", "interview", "offer", "rejected", "unrelated"]
+    status: Literal["applied", "screen", "interview", "offer", "rejected", "unrelated"]
+
+
+class ApplicationDetails(BaseModel):
+    company: str = Field(default="Company", max_length=120)
+    role: str = Field(default="Role", max_length=160)
 
 
 class Keyword(BaseModel):

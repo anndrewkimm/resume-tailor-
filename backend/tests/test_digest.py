@@ -165,6 +165,23 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(sum(series[1]), 1)
         self.assertEqual(sum(series[2]), 0)
 
+    def test_new_application_suggestion_is_clearly_labeled(self):
+        rows = digest._suggestion_rows(
+            [
+                {
+                    "id": "new123",
+                    "kind": "new_application",
+                    "company": "Outside Co",
+                    "role": "Engineer",
+                    "status": "applied",
+                    "evidence": "Application received",
+                }
+            ]
+        )
+
+        self.assertIn("NEW APPLICATION", rows)
+        self.assertIn("email_tracker confirm new123", rows)
+
 
 if __name__ == "__main__":
     unittest.main()
