@@ -1349,3 +1349,32 @@ Ordered digest first (smaller, zero new model-call surface, pure
 presentation of data that already exists) then quality-review (larger,
 new LLM call sites in both background-job functions, extension rendering
 changes).
+
+## 19. Real-inbox test surfaces a real gap: email can only update, never create (2026-08-02)
+
+Ran the finished email tracker against the user's actual Gmail: `poll`
+correctly classified 11 real status emails (Optiver, IMC Trading, Rocket
+Lab, NVIDIA) but landed all 11 in `unmatched`, because `applications.jsonl`
+only had 3 tracked rows (all from tailoring through this tool) and none of
+those companies were among them. Working as designed — but the user's own
+pushback was the right one: they get an "applied" confirmation email for
+essentially every application regardless of channel, so requiring a
+tailor+compile pass just to get something tracked is backwards. `/compile`
+shouldn't be the only door in.
+
+`CODEX_TASK_email_creates_applications.md` closes this: an "applied"
+confirmation email with no matching tracked row now stages a *new*
+suggestion (extracting company/role via one LLM call, same untrusted-data
+handling as everything else touching email content) instead of falling
+into `unmatched`. Confirming it calls a new `tracker.record_applied`
+instead of `tracker.record_outcome`. Still fully review-gated — same
+stage-then-`confirm` shape, just a second thing `confirm` can do. Other
+statuses (rejected/interview/offer/screen) are unchanged — when unmatched
+they still land in `unmatched`, never creating a new row. Deliberately not
+generalized past "applied," since confirming "yes I applied here" is a
+low-stakes claim and confirming a decision with no prior record of even
+applying is a stranger UX. Known accepted limitation,
+written into the spec: this can produce a duplicate row if the user later
+also tailors a resume for a company/role an email already auto-created —
+no merge/dedup logic added, consistent with this repo's append-only,
+no-delete JSONL philosophy.
