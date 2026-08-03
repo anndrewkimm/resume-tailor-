@@ -34,13 +34,13 @@ function renderDiscoveredList() {
     link.href = posting.url;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
-    link.textContent = `${posting.company} â€” ${posting.role}`;
+    link.textContent = `${posting.company} — ${posting.role}`;
     const meta = document.createElement("p");
     meta.className = "note";
     const fit = posting.fit_score === null || posting.fit_score === undefined
       ? "unscored"
       : `fit ${posting.fit_score}%`;
-    meta.textContent = `${posting.location || "â€”"} Â· ${fit} Â· ${posting.status || "new"}`;
+    meta.textContent = `${posting.location || "—"} · ${fit} · ${posting.status || "new"}`;
     const actions = document.createElement("div");
     actions.className = "discovered-actions";
     for (const [label, status] of [["Dismiss", "dismissed"], ["Mark tailored", "tailored"]]) {
@@ -73,7 +73,7 @@ async function showDiscovered() {
   clearError();
   hideViews();
   show("#discovered");
-  $("#discovered-list").textContent = "Loadingâ€¦";
+  $("#discovered-list").textContent = "Loading…";
   try {
     const config = await settings();
     const result = await ext.runtime.sendMessage({ type: "LIST_DISCOVERED_JOBS", ...config });
