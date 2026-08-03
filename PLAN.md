@@ -1138,3 +1138,81 @@ confirmed by comparison). The underlying JSONL data is correctly UTF-8;
 only the console `print()` display is affected. Not fixed — out of scope
 for this task and consistent with an already-shipped feature, not a
 regression.
+
+## 16. Roadmap — everything left after the job-discovery pivot (2026-08-02)
+
+User asked for a full status rundown, then said to plan out everything
+still open. This section is the ordered roadmap; each ready item gets its
+own `CODEX_TASK_*.md` for Codex to implement, same as every prior feature.
+
+### 16.1 Already fixed inline, same session
+
+`startTailor` (`extension/background.js`) cleared `tailorResult`/
+`activeJobId` before starting a new job but not `letterResult`/
+`activeLetterJobId` — the real small bug found in §14.2. Sequence: tailor
+job A → draft a letter for A → tailor job B without clicking "New tailor"
+→ A's stale letter draft could resurface against B's company/role in the
+popup. Fixed directly (one line, mirrors what `resetTailor()` in
+`popup.js` already did) rather than routing a one-line change through a
+Codex spec — never affected the compiled PDF, only popup display state.
+
+### 16.2 Ready to spec, in implementation order
+
+1. **`CODEX_TASK_discovery_extension_ui.md`** — browsable in-popup list of
+   discovered postings plus a toolbar badge count, the fast-follow
+   explicitly deferred by §15's v1 scope. Smallest of the four ready
+   backend/extension tasks and has no dependency on the others.
+2. **`CODEX_TASK_ats_platform_expansion.md`** — Lever and Ashby alongside
+   Greenhouse in `discovery.py`, the other fast-follow named in §15.
+   Independent of #1; ordered second only because the extension UI is
+   more directly user-visible.
+3. **`CODEX_TASK_redis_job_state.md`** — replace `jobs.py`'s in-process
+   dict with Redis-backed state, per §14.4's "the one legitimate infra
+   rep already motivated by this repo's own code." Ordered third: it's an
+   internal robustness change, not a new capability, and touches the same
+   `jobs.py`/`main.py` surface #1 also reads from, so doing it after #1
+   avoids a merge collision on the job-status response shape.
+4. **`CODEX_TASK_email_tracker.md`** — dedicated-inbox polling that
+   proposes `applications.jsonl` outcome updates for the user to confirm.
+   Ordered last: by far the largest of the four (new OAuth credential
+   surface, three new dependencies, a manual Google Cloud Console setup
+   step, a new review-gated CLI workflow) and independent of the other
+   three — see §16.3 for how its open questions got resolved.
+
+### 16.3 Was blocked on a user decision — resolved 2026-08-02
+
+**Job-search email → auto-updated tracker** (§14.3) was the largest and
+most sensitive item (a new credential/OAuth surface — see PLAN.md §3.2's
+stance on not casually widening credential surface), and §14.3's own open
+questions (auth mechanism, matching heuristic, classification, where the
+poller runs) were unresolved. Asked the user directly for the one genuine
+fork only they could resolve — Gmail OAuth read-only vs. IMAP app
+password — and they delegated the choice back ("do what you think is
+best"). Went with **Gmail OAuth, read-only**, matching §14.3's own
+original lean ("no stored password... given §3.2's existing stance on not
+casually widening credential surface"). The remaining open questions
+(matching heuristic, classification, where it runs) were resolved
+directly in `CODEX_TASK_email_tracker.md` using the defaults §14.3 already
+sketched (company-name-plus-recency matching; cheap keyword pass falling
+back to the local Ollama model; CLI-driven polling, no daemon).
+
+While writing the spec, found a real tension worth recording: naively
+auto-writing `applications.jsonl` from an LLM's email classification would
+be the first place in this codebase where model output mutates persisted
+state with **no human review gate** — everything else (resume edits,
+cover-letter paragraphs) is reviewed before it's acted on, per §5.3's
+"human-in-the-loop is mandatory, not optional." The spec's `poll` command
+therefore only ever stages a suggestion; nothing touches
+`applications.jsonl` until the user runs `confirm <id-prefix>`, mirroring
+the id-prefix `dismiss`/`tailored` shape `discovery.py` already
+established. This was a judgment call under the "do what you think is
+best" delegation, not something the user asked for explicitly — flagged
+here in case it should have been asked about instead of decided.
+
+### 16.4 Deliberately not planned
+
+**Postgres for the tracker** (§14.4) stays unspec'd: the plan explicitly
+conditions it on `applications.jsonl` becoming awkward to query, which
+hasn't happened. Speccing it now would be solving a problem that doesn't
+exist yet, contrary to this repo's stated preference for JSONL's
+simplicity (`CODEX_TASK_application_tracker.md`).
