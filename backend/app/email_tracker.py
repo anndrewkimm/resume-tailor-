@@ -449,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         print(dismiss_suggestion(args.identifier))
         return 0
-    except ValueError as exc:
+    except (ValueError, llm.LLMError) as exc:
         parser.error(str(exc))
     return 2
 

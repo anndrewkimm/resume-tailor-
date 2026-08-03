@@ -20,7 +20,7 @@ _PIPELINE_STATUSES = (
     "ghosted",
 )
 _SERIES = (
-    ("Discovered", "#176c49"),
+    ("Discovered", "#0d8a4e"),
     ("Applications", "#315c9e"),
     ("Email suggestions", "#a15c16"),
 )
