@@ -34,7 +34,7 @@ async function callApi(backendUrl, sharedSecret, path, body) {
 
 async function startTailor({ tabId, backendUrl, sharedSecret }) {
   const url = localBackendUrl(backendUrl);
-  await ext.storage.local.remove(["tailorResult", "activeJobId"]);
+  await ext.storage.local.remove(["tailorResult", "activeJobId", "letterResult", "activeLetterJobId"]);
   const jobText = await extractJobPosting(tabId);
   const { job_id: jobId } = await callApi(url, sharedSecret, "/tailor/start", { job_text: jobText });
   if (!jobId) throw new Error("Backend did not return a tailoring job ID.");
