@@ -61,6 +61,7 @@ class JobStorageTests(unittest.TestCase):
             original_text="Built a model.",
             traceable=True,
             issues=[],
+            quality_notes=["Make the relationship explicit."],
         )
         matched = KeywordMatch(
             term="Python",
@@ -69,7 +70,11 @@ class JobStorageTests(unittest.TestCase):
             matched=True,
         )
         fit = FitReport(score=100, matched=[matched], missing=[])
-        paragraph = ReviewedParagraph(text="I build grounded software.", issues=[])
+        paragraph = ReviewedParagraph(
+            text="I build grounded software.",
+            issues=[],
+            quality_notes=["Identify the contribution more precisely."],
+        )
 
         jobs.update_job(
             job_id,
@@ -96,6 +101,21 @@ class JobStorageTests(unittest.TestCase):
 
     def test_job_key_has_configured_ttl(self):
         job_id = jobs.create_job()
+        ttl = self.client.ttl(jobs._key(job_id))
+        self.assertGreater(ttl, 0)
+        self.assertLessEqual(ttl, config.JOB_STATE_TTL_SECONDS)
+
+    def test_update_refreshes_ttl_and_preserves_unmodified_fields(self):
+        job_id = jobs.create_job(kind="letter")
+        self.client.persist(jobs._key(job_id))
+        self.assertEqual(self.client.ttl(jobs._key(job_id)), -1)
+
+        jobs.update_job(job_id, status="done")
+        stored = jobs.get_job(job_id)
+
+        self.assertEqual(stored.kind, "letter")
+        self.assertEqual(stored.status, "done")
+        self.assertIn("cover letter", stored.step)
         ttl = self.client.ttl(jobs._key(job_id))
         self.assertGreater(ttl, 0)
         self.assertLessEqual(ttl, config.JOB_STATE_TTL_SECONDS)

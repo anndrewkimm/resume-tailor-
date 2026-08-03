@@ -7,13 +7,21 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import ValidationError
+from redis.exceptions import RedisError
 
 from . import config, discovery, tracker
 from .fit import compute_fit
 from .jobs import create_job, get_job, update_job
 from .letter import LetterValidationError, render_letter_tex, validate_letter_paragraph
 from .latex_compile import CompileError, compile_tex
-from .llm import LLMError, draft_cover_letter, extract_keywords, generate_edits
+from .llm import (
+    LLMError,
+    draft_cover_letter,
+    extract_keywords,
+    generate_edits,
+    review_edit_quality,
+    review_letter_quality,
+)
 from .models import (
     CompileCoverLetterRequest,
     CompileRequest,
@@ -65,6 +73,16 @@ def _safe_filename_part(value: str) -> str:
     return "_".join(words)[:80] or "Unknown"
 
 
+def _job_store_unavailable(exc: RedisError) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail=(
+            "Job-state Redis is unavailable. Start the loopback Redis service "
+            "and retry."
+        ),
+    )
+
+
 def _review_edits(source: str, proposals, keyword_terms: list[str]) -> list[ReviewedEdit]:
     reviewed: list[ReviewedEdit] = []
     seen: set[tuple[str, str, int | None]] = set()
@@ -88,6 +106,16 @@ def _review_edits(source: str, proposals, keyword_terms: list[str]) -> list[Revi
     return reviewed
 
 
+def _review_quality(call, items) -> dict[int, list[str]]:
+    try:
+        return call(items)
+    except Exception as exc:
+        # This second pass is advisory. A model/format failure must not discard
+        # an otherwise safe, grounded tailoring result.
+        print(f"warning: writing-quality review unavailable: {exc}", file=sys.stderr)
+        return {}
+
+
 def _run_tailor_job(job_id: str, job_text: str) -> None:
     try:
         analysis = extract_keywords(job_text)
@@ -102,6 +130,12 @@ def _run_tailor_job(job_id: str, job_text: str) -> None:
         proposals = generate_edits(job_text, analysis.keywords, source)
         keyword_terms = [keyword.term for keyword in analysis.keywords if keyword.category == "technology"]
         reviewed = _review_edits(source, proposals, keyword_terms)
+        update_job(job_id, step="Reviewing grounded edits for writing quality…")
+        quality_notes = _review_quality(review_edit_quality, reviewed)
+        reviewed = [
+            edit.model_copy(update={"quality_notes": quality_notes.get(index, [])})
+            for index, edit in enumerate(reviewed)
+        ]
         update_job(job_id, status="done", analysis=analysis, edits=reviewed, fit=fit)
     except (LLMError, ValidationError) as exc:
         update_job(job_id, status="error", error=str(exc))
@@ -132,6 +166,15 @@ def _run_cover_letter_job(
             except LetterValidationError as exc:
                 issues = [f"unsafe: {exc}"]
             paragraphs.append(ReviewedParagraph(text=paragraph.text, issues=issues))
+        update_job(job_id, step="Reviewing grounded letter wording…")
+        quality_notes = _review_quality(
+            review_letter_quality,
+            [paragraph.text if not paragraph.issues else "" for paragraph in paragraphs],
+        )
+        paragraphs = [
+            paragraph.model_copy(update={"quality_notes": quality_notes.get(index, [])})
+            for index, paragraph in enumerate(paragraphs)
+        ]
         update_job(job_id, status="done", paragraphs=paragraphs)
     except (LLMError, ValidationError) as exc:
         update_job(job_id, status="error", error=str(exc))
@@ -166,7 +209,10 @@ def start_tailor(
     req: StartTailorRequest, _: None = Depends(require_extension_origin)
 ) -> StartTailorResponse:
     _check_job_size(req.job_text)
-    job_id = create_job()
+    try:
+        job_id = create_job()
+    except RedisError as exc:
+        raise _job_store_unavailable(exc) from exc
     threading.Thread(target=_run_tailor_job, args=(job_id, req.job_text), daemon=True).start()
     return StartTailorResponse(job_id=job_id)
 
@@ -175,7 +221,10 @@ def start_tailor(
 def tailor_status(
     job_id: str, _: None = Depends(require_extension_origin)
 ) -> TailorStatusResponse:
-    job = get_job(job_id)
+    try:
+        job = get_job(job_id)
+    except RedisError as exc:
+        raise _job_store_unavailable(exc) from exc
     if job is None or job.kind != "tailor":
         raise HTTPException(status_code=404, detail="unknown job_id")
     return TailorStatusResponse(
@@ -231,7 +280,10 @@ def start_cover_letter(
     req: StartCoverLetterRequest, _: None = Depends(require_extension_origin)
 ) -> StartTailorResponse:
     _check_job_size(req.job_text)
-    job_id = create_job(kind="letter")
+    try:
+        job_id = create_job(kind="letter")
+    except RedisError as exc:
+        raise _job_store_unavailable(exc) from exc
     threading.Thread(
         target=_run_cover_letter_job,
         args=(job_id, req.job_text, req.company, req.role, req.keywords),
@@ -244,7 +296,10 @@ def start_cover_letter(
 def cover_letter_status(
     job_id: str, _: None = Depends(require_extension_origin)
 ) -> CoverLetterStatusResponse:
-    job = get_job(job_id)
+    try:
+        job = get_job(job_id)
+    except RedisError as exc:
+        raise _job_store_unavailable(exc) from exc
     if job is None or job.kind != "letter":
         raise HTTPException(status_code=404, detail="unknown job_id")
     return CoverLetterStatusResponse(

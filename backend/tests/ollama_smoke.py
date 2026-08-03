@@ -112,6 +112,8 @@ def main() -> None:
                 "keywords": status["keywords"],
             }
             reviewed = status["edits"]
+            if any("quality_notes" not in edit for edit in reviewed):
+                raise RuntimeError("tailoring result omitted advisory quality notes")
             approved = [
                 {key: edit[key] for key in ("target", "new_text", "reason")}
                 for edit in reviewed
@@ -158,6 +160,8 @@ def main() -> None:
             reviewed_paragraphs = letter_status["paragraphs"]
             if not reviewed_paragraphs:
                 raise RuntimeError("Ollama produced no cover-letter paragraphs")
+            if any("quality_notes" not in item for item in reviewed_paragraphs):
+                raise RuntimeError("cover-letter result omitted advisory quality notes")
             edited_paragraphs = [{"text": item["text"]} for item in reviewed_paragraphs]
             edited_paragraphs[-1]["text"] += " I welcome the opportunity to discuss this role."
             letter_pdf, _ = post(

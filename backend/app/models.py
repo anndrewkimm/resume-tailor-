@@ -92,10 +92,20 @@ class ProposedEditsResponse(BaseModel):
     edits: list[ProposedEdit] = Field(default_factory=list, max_length=12)
 
 
+class QualitySuggestion(BaseModel):
+    index: int = Field(ge=0)
+    note: str = Field(min_length=1, max_length=300)
+
+
+class QualityReviewResponse(BaseModel):
+    suggestions: list[QualitySuggestion] = Field(default_factory=list, max_length=20)
+
+
 class ReviewedEdit(ProposedEdit):
     original_text: str
     traceable: bool
     issues: list[str] = Field(default_factory=list)
+    quality_notes: list[str] = Field(default_factory=list)
 
 
 class GenerateDiffRequest(BaseModel):
@@ -144,6 +154,7 @@ class CoverLetterDraftResponse(BaseModel):
 class ReviewedParagraph(BaseModel):
     text: str
     issues: list[str] = Field(default_factory=list)
+    quality_notes: list[str] = Field(default_factory=list)
 
 
 class StartCoverLetterRequest(BaseModel):

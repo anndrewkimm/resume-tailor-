@@ -57,14 +57,18 @@ async function setDiscoveryStatus({ backendUrl, sharedSecret, id, status }) {
   return callApi(url, sharedSecret, "/discovery/status", { id, status });
 }
 
+async function setDiscoveryBadge(postings) {
+  const newCount = postings.filter((posting) => !posting.status).length;
+  await ext.action.setBadgeBackgroundColor({ color: "#176c49" });
+  await ext.action.setBadgeText({ text: newCount > 0 ? String(newCount) : "" });
+}
+
 async function refreshDiscoveryBadge() {
   const stored = await ext.storage.local.get(["backendUrl", "sharedSecret"]);
   if (!stored.backendUrl) return;
   try {
     const { postings } = await listDiscoveredPostings(stored);
-    const newCount = postings.filter((posting) => !posting.status).length;
-    await ext.action.setBadgeBackgroundColor({ color: "#176c49" });
-    await ext.action.setBadgeText({ text: newCount > 0 ? String(newCount) : "" });
+    await setDiscoveryBadge(postings);
   } catch {
     // Backend down/unreachable is routine. Keep the last known badge.
   }
@@ -276,6 +280,14 @@ ext.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === "LIST_DISCOVERED_JOBS") {
     listDiscoveredPostings(message)
+      .then(async (result) => {
+        await ext.storage.local.set({
+          backendUrl: localBackendUrl(message.backendUrl),
+          sharedSecret: message.sharedSecret || ""
+        });
+        await setDiscoveryBadge(result.postings || []);
+        return result;
+      })
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;

@@ -9,6 +9,7 @@ A local, review-gated Firefox workflow that reads the job posting in your active
 - Fully local Ollama inference for posting analysis and addressable resume edits.
 - Server-side checks for unknown targets, target-bullet-grounded wording/entities/numbers, immutable skill-list membership, duplicate targets, unsafe LaTeX, and malformed braces.
 - Mandatory per-edit review; flagged edits are visible but cannot be selected.
+- Advisory local-model writing-quality notes for grounded resume edits and cover-letter paragraphs; these never block or auto-apply changes.
 - Deterministic weighted job-fit scoring, with missing keywords shown before review.
 - Review-gated cover letters with resume-global grounding checks and explicit confirmation for flagged claims.
 - Greenhouse, Lever, and Ashby job discovery for a hand-curated list of small/mid-size companies, with popup review, local fit scoring, and an HTML report.
@@ -87,7 +88,7 @@ Start the backend:
 .\start_backend.cmd
 ```
 
-Then open a single job posting, click the extension, and choose **Tailor this resume**. Review the fit score and every proposed change, then compile only the checked edits. From the review screen you can also draft a cover letter, edit every paragraph, confirm any grounding warnings, and compile it. PDFs are retained in [`output`](output).
+Then open a single job posting, click the extension, and choose **Tailor this resume**. Review the fit score and every proposed change, then compile only the checked edits. After factual validation, one additional local-model pass may add advisory notes about generic, passive, clichéd, unquantified, or unclear writing; it never changes selection state or blocks compilation, and a failure in this optional pass does not discard a safe result. From the review screen you can also draft a cover letter, edit every paragraph, confirm any grounding warnings, and compile it. PDFs are retained in [`output`](output).
 
 The health endpoint is available at `http://127.0.0.1:8765/health`. The API intentionally refuses tailoring/compile requests until either `SHARED_SECRET` or an exact `ALLOWED_ORIGIN` is configured.
 
@@ -184,6 +185,16 @@ python -m backend.app.email_tracker dismiss <id-prefix>
 ```
 
 `poll` searches only the last 180 days, skips Gmail message IDs already seen locally, uses explicit status phrases before falling back to the loopback-only Ollama model, and matches only a literal tracked company name. Classified messages without a confident application match are recorded as unmatched for manual handling with `python -m backend.app.tracker outcome`; they are never guessed onto an application. Polling is CLI-driven, not a daemon. `confirm` is the only email-tracker command that writes an outcome to `applications.jsonl`.
+
+## Unified job-search digest
+
+Generate one self-contained local dashboard combining discovered jobs, current application outcomes, 30-day activity, and pending email suggestions:
+
+```powershell
+python -m backend.app.digest
+```
+
+The report is written to `output/digest_report.html`. It contains no external scripts or network requests, and it remains read-only: email outcomes still require an explicit `email_tracker confirm` command.
 
 ## Important behavior
 

@@ -7,10 +7,11 @@ from unittest.mock import patch
 
 import fakeredis
 from fastapi.testclient import TestClient
+from redis.exceptions import RedisError
 
 from backend.app import config, discovery, jobs
 from backend.app.latex_compile import CompileResult
-from backend.app.main import app
+from backend.app.main import _review_quality, app
 from backend.app.models import (
     CoverLetterDraftResponse,
     EditTarget,
@@ -18,6 +19,7 @@ from backend.app.models import (
     Keyword,
     LetterParagraph,
     ProposedEdit,
+    ReviewedEdit,
 )
 
 
@@ -138,6 +140,62 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(updated.json(), {"ok": True})
         self.assertEqual(discovery.read_postings()[0]["status"], "tailored")
+
+    def test_discovery_status_rejects_unsupported_status(self):
+        response = self.client.post(
+            "/discovery/status",
+            json={"id": "posting-1", "status": "applied"},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 422)
+
+    @patch("backend.app.main.create_job", side_effect=RedisError("offline"))
+    def test_tailor_start_returns_actionable_redis_unavailable_error(self, create_job):
+        response = self.client.post(
+            "/tailor/start",
+            json={"job_text": "A sufficiently long software engineering role. " * 3},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Start the loopback Redis service", response.json()["detail"])
+        create_job.assert_called_once_with()
+
+    @patch("backend.app.main.get_job", side_effect=RedisError("offline"))
+    def test_tailor_status_returns_actionable_redis_unavailable_error(self, get_job):
+        response = self.client.get("/tailor/status/job-1", headers=self.headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Redis is unavailable", response.json()["detail"])
+        get_job.assert_called_once_with("job-1")
+
+    @patch("backend.app.main.create_job", side_effect=RedisError("offline"))
+    def test_cover_letter_start_returns_actionable_redis_unavailable_error(self, create_job):
+        response = self.client.post(
+            "/cover-letter/start",
+            json={
+                "job_text": "A sufficiently long software engineering role. " * 3,
+                "company": "Acme",
+                "role": "Engineer",
+                "keywords": [
+                    {
+                        "term": "Python",
+                        "category": "technology",
+                        "importance": "high",
+                        "evidence": "required",
+                    }
+                ],
+            },
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Start the loopback Redis service", response.json()["detail"])
+        create_job.assert_called_once_with(kind="letter")
+
+    @patch("backend.app.main.get_job", side_effect=RedisError("offline"))
+    def test_cover_letter_status_returns_actionable_redis_unavailable_error(self, get_job):
+        response = self.client.get("/cover-letter/status/job-1", headers=self.headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Redis is unavailable", response.json()["detail"])
+        get_job.assert_called_once_with("job-1")
 
     def test_firefox_extension_origin_is_allowed_by_cors(self):
         origin = "moz-extension://12345678-1234-1234-1234-123456789abc"
@@ -276,6 +334,47 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status.json()["keywords"][0]["term"], "REST API")
         self.assertEqual(status.json()["fit"]["score"], 100)
 
+    def test_tailor_status_includes_nonblocking_quality_advice(self):
+        analysis = ExtractKeywordsResponse(company="Example Co", role="Engineer", keywords=[])
+        reviewed = ReviewedEdit(
+            target=EditTarget(section="Experience", anchor="Flexera", item_index=0),
+            new_text="Built useful automation.",
+            reason="Surface relevant work.",
+            original_text="Built automation.",
+            traceable=True,
+            issues=[],
+        )
+        with (
+            patch("backend.app.main.extract_keywords", return_value=analysis),
+            patch("backend.app.main.generate_edits", return_value=[]),
+            patch("backend.app.main._review_edits", return_value=[reviewed]),
+            patch(
+                "backend.app.main.review_edit_quality",
+                return_value={0: ["Identify the contribution more precisely."]},
+            ) as quality,
+            patch("backend.app.main.threading.Thread") as thread_class,
+        ):
+            def run_immediately():
+                thread_args = thread_class.call_args.kwargs
+                thread_args["target"](*thread_args["args"])
+
+            thread_class.return_value.start.side_effect = run_immediately
+            started = self.client.post(
+                "/tailor/start",
+                json={"job_text": "A sufficiently long software engineering role. " * 3},
+                headers=self.headers,
+            )
+        status = self.client.get(
+            f"/tailor/status/{started.json()['job_id']}", headers=self.headers
+        )
+        self.assertEqual(status.json()["status"], "done")
+        self.assertTrue(status.json()["edits"][0]["traceable"])
+        self.assertEqual(
+            status.json()["edits"][0]["quality_notes"],
+            ["Identify the contribution more precisely."],
+        )
+        quality.assert_called_once_with([reviewed])
+
     def test_cover_letter_start_status_and_compile_confirmation_gate(self):
         draft = CoverLetterDraftResponse(
             paragraphs=[
@@ -291,6 +390,10 @@ class ApiTests(unittest.TestCase):
         }
         with (
             patch("backend.app.main.draft_cover_letter", return_value=draft),
+            patch(
+                "backend.app.main.review_letter_quality",
+                return_value={0: ["Opening is generic."]},
+            ),
             patch("backend.app.main.threading.Thread") as thread_class,
         ):
             def run_immediately():
@@ -313,6 +416,10 @@ class ApiTests(unittest.TestCase):
             f"/cover-letter/status/{started.json()['job_id']}", headers=self.headers
         )
         self.assertEqual(status.json()["status"], "done")
+        self.assertEqual(
+            status.json()["paragraphs"][0]["quality_notes"],
+            ["Opening is generic."],
+        )
         self.assertTrue(status.json()["paragraphs"][1]["issues"])
 
         payload = {
@@ -342,6 +449,7 @@ class ApiTests(unittest.TestCase):
         )
         with (
             patch("backend.app.main.draft_cover_letter", return_value=draft),
+            patch("backend.app.main.review_letter_quality", return_value={}) as quality,
             patch("backend.app.main.threading.Thread") as thread_class,
         ):
             def run_immediately():
@@ -373,6 +481,16 @@ class ApiTests(unittest.TestCase):
         paragraphs = status.json()["paragraphs"]
         self.assertEqual(paragraphs[0]["issues"], [])
         self.assertTrue(any(issue.startswith("unsafe:") for issue in paragraphs[1]["issues"]))
+        self.assertEqual(paragraphs[1]["quality_notes"], [])
+        quality.assert_called_once_with(
+            ["My models achieved 90% accuracy in production.", ""]
+        )
+
+    def test_writing_quality_failure_is_advisory_not_fatal(self):
+        def fail(_items):
+            raise RuntimeError("quality model failed")
+
+        self.assertEqual(_review_quality(fail, ["Grounded edit"]), {})
 
     @patch("backend.app.main.compile_tex", return_value=CompileResult(pdf_bytes=b"never"))
     def test_cover_letter_latex_safety_cannot_be_overridden(self, compile_mock):

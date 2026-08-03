@@ -24,17 +24,48 @@ async function activeTabId() {
   return tab.id;
 }
 
+function safePostingUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function updateInlineDiscoveryBadge() {
+  const newCount = state.discovered.filter((posting) => !posting.status).length;
+  $("#discovered-badge").textContent = newCount > 0 ? String(newCount) : "";
+  $("#discovered-badge").classList.toggle("hidden", newCount === 0);
+}
+
 function renderDiscoveredList() {
   const hideHandled = $("#discovered-hide-handled").checked;
   const rows = state.discovered.filter((posting) => !hideHandled || !posting.status);
+  updateInlineDiscoveryBadge();
+  if (rows.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "note discovered-empty";
+    empty.textContent = state.discovered.length
+      ? "No new postings. Uncheck “Hide dismissed/tailored” to review handled jobs."
+      : "No postings have been discovered yet. Run the poll command shown above, then refresh.";
+    $("#discovered-list").replaceChildren(empty);
+    return;
+  }
   $("#discovered-list").replaceChildren(...rows.map((posting) => {
     const row = document.createElement("article");
     row.className = "discovered-row";
-    const link = document.createElement("a");
-    link.href = posting.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = `${posting.company} — ${posting.role}`;
+    const href = safePostingUrl(posting.url);
+    const title = document.createElement(href ? "a" : "span");
+    title.className = "discovered-title";
+    if (href) {
+      title.href = href;
+      title.target = "_blank";
+      title.rel = "noopener noreferrer";
+    } else {
+      title.title = "This posting has an invalid or unsafe URL.";
+    }
+    title.textContent = `${posting.company} — ${posting.role}`;
     const meta = document.createElement("p");
     meta.className = "note";
     const fit = posting.fit_score === null || posting.fit_score === undefined
@@ -64,7 +95,7 @@ function renderDiscoveredList() {
       });
       actions.append(button);
     }
-    row.append(link, meta, actions);
+    row.append(title, meta, actions);
     return row;
   }));
 }
@@ -148,11 +179,16 @@ function renderResults() {
 
   const flaggedCount = state.edits.filter((edit) => !edit.traceable).length;
   const selectableCount = state.edits.length - flaggedCount;
+  const qualityCount = state.edits.reduce(
+    (count, edit) => count + (edit.traceable ? (edit.quality_notes || []).length : 0),
+    0
+  );
   $("#edit-summary").textContent = state.edits.length === 0
     ? "No edits were proposed for this posting — the resume will compile unchanged unless you go back and try a more closely matching posting."
     : `${state.edits.length} edit${state.edits.length === 1 ? "" : "s"} proposed`
       + (flaggedCount ? `, ${flaggedCount} safety-flagged (see reasons below)` : "")
-      + (selectableCount ? `, ${selectableCount} selected` : ", none selectable");
+      + (selectableCount ? `, ${selectableCount} selected` : ", none selectable")
+      + (qualityCount ? `, ${qualityCount} advisory quality note${qualityCount === 1 ? "" : "s"}` : "");
   const rejectionSummary = commonRejectedEntitySummary();
   $("#rejection-summary").textContent = rejectionSummary;
   $("#rejection-summary").classList.toggle("hidden", !rejectionSummary);
@@ -175,6 +211,12 @@ function renderResults() {
     );
     if (!edit.traceable) {
       const flag = document.createElement("div"); flag.className = "flag"; flag.textContent = edit.issues.join(" · "); card.append(flag);
+    }
+    if (edit.traceable && edit.quality_notes?.length) {
+      const quality = document.createElement("div");
+      quality.className = "quality-note";
+      quality.textContent = `Quality note (advisory only): ${edit.quality_notes.join(" · ")}`;
+      card.append(quality);
     }
     return card;
   }));
@@ -221,6 +263,12 @@ function renderLetter() {
       flag.className = "flag";
       flag.textContent = paragraph.issues.join(" · ");
       card.append(flag);
+    }
+    if (!paragraph.issues?.length && paragraph.quality_notes?.length) {
+      const quality = document.createElement("div");
+      quality.className = "quality-note";
+      quality.textContent = `Quality note (advisory only): ${paragraph.quality_notes.join(" · ")}`;
+      card.append(quality);
     }
     return card;
   }));
@@ -270,7 +318,7 @@ async function tailor() {
 async function compileResume() {
   clearError();
   const approved = [...document.querySelectorAll(".edit input:checked")].map((input) => {
-    const { original_text, traceable, issues, ...proposal } = state.edits[Number(input.dataset.index)];
+    const { original_text, traceable, issues, quality_notes, ...proposal } = state.edits[Number(input.dataset.index)];
     return proposal;
   });
   setProgress("Compiling the selected edits…");

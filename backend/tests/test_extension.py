@@ -87,6 +87,24 @@ class FirefoxExtensionTests(unittest.TestCase):
         self.assertIn("letterResult", background)
         self.assertIn("COMPILE_LETTER_AND_DOWNLOAD", popup)
 
+    def test_discovery_ui_has_safe_links_empty_state_and_advisory_quality_notes(self):
+        html = (EXTENSION / "popup.html").read_text(encoding="utf-8")
+        popup = (EXTENSION / "popup.js").read_text(encoding="utf-8")
+        css = (EXTENSION / "popup.css").read_text(encoding="utf-8")
+
+        self.assertIn("function safePostingUrl", popup)
+        self.assertIn('["http:", "https:"]', popup)
+        self.assertIn("No postings have been discovered yet", popup)
+        self.assertIn("Quality note (advisory only)", popup)
+        self.assertIn("quality_notes, ...proposal", popup)
+        self.assertIn("edit.traceable && edit.quality_notes?.length", popup)
+        self.assertIn("!paragraph.issues?.length && paragraph.quality_notes?.length", popup)
+        self.assertIn(".quality-note", css)
+        self.assertIn('id="discovered-list"', html)
+        for source in (html, popup):
+            self.assertNotIn("â", source)
+            self.assertNotIn("Â", source)
+
 
 if __name__ == "__main__":
     unittest.main()

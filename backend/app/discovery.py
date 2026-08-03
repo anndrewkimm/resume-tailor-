@@ -422,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
     _configure_console_encoding()
     parser = argparse.ArgumentParser(description="Local small/mid-size job discovery")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("poll", help="poll configured Greenhouse boards")
+    subparsers.add_parser("poll", help="poll configured ATS boards")
     subparsers.add_parser("score", help="score postings that do not have a fit score")
     list_parser = subparsers.add_parser("list", help="list discovered postings")
     list_parser.add_argument("--new-only", action="store_true", help="hide dismissed/tailored postings")

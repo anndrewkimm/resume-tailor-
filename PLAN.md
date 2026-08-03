@@ -1216,3 +1216,136 @@ conditions it on `applications.jsonl` becoming awkward to query, which
 hasn't happened. Speccing it now would be solving a problem that doesn't
 exist yet, contrary to this repo's stated preference for JSONL's
 simplicity (`CODEX_TASK_application_tracker.md`).
+
+## 17. All four §16.2 specs implemented and reviewed (2026-08-02)
+
+Codex implemented all four specs in one pass (`f31aba4`), 23 files, ~1580
+lines. Review found the implementation matched every spec closely — in one
+place (the platform-fetcher dispatch table in `discovery.py`) it improved
+on the spec: wrapping each entry in a lambda so `@patch("...fetch_greenhouse_jobs")`
+in existing tests still takes effect through late-bound module-global
+lookup, which the spec's literal dict-of-function-references would not
+have supported without breaking three pre-existing tests. Test coverage
+(`test_email_tracker.py`, `test_jobs.py`, plus extensions to
+`test_discovery.py`/`test_api.py`/`test_llm.py`) is thorough, including a
+prompt-injection-resistance test for the email classifier and an explicit
+assertion that `dismiss_suggestion` never calls `tracker.record_outcome`
+(the human-in-the-loop gate holding under test, not just by inspection).
+
+**One real bug found and fixed directly** (not routed through a Codex
+spec — mechanical, no logic involved): `extension/popup.html` and
+`popup.js` shipped with em dashes, a middle dot, and an ellipsis
+double-encoded as UTF-8-misread-as-Windows-1252 (`—` as literal bytes
+`\xe2\x80\x94` reinterpreted through cp1252 and re-encoded became the
+8-byte garbage sequence rendering as "â€”"). This is a different bug
+from the already-known/accepted Windows-console-`print()` mojibake
+(§15's landing note, `discovery.py`'s `list` command) — that one is
+about terminal STDOUT encoding; this one was corrupted bytes actually
+saved into the extension source, which would have rendered visibly
+broken characters in the real popup UI for every discovered-jobs row.
+Fixed in `638ed76`. All 99 backend tests pass; `node --check` and the
+background regression test pass.
+
+## 18. Positioning: why this over the popular public repos (2026-08-02)
+
+Prompted by the user pulling up what's currently popular in this space —
+`career-ops`, `ai-job-search` (now trending, ~19.5K stars), `jobsync`,
+`ApplyPilot` — and asking directly why someone would use this over
+forking one of those. Answering honestly, using my own judgment as asked,
+not just cheerleading:
+
+**The real differentiators, in order of how much they actually matter:**
+
+1. **Deterministic, code-level non-fabrication, not prompt-trusted
+   drafting.** This is the actual product, not a feature. `resume_parser.py`'s
+   `validate_edit` and the letter-grounding checks reject any entity,
+   number, or wording not already present in that exact original bullet —
+   enforced in code, not by asking a model nicely. `ai-job-search`'s own
+   description of its "drafter-reviewer" pattern is still LLM-checking-LLM;
+   that's a softer guarantee than a parser that structurally cannot let an
+   unverified claim through. In a domain where getting caught fabricating
+   is catastrophic (rescinded offers), this is the one property worth
+   never compromising, and it's already this repo's non-negotiable §2.
+2. **Fully local, zero marginal cost, private by construction.**
+   `career-ops`/`ai-job-search` run on top of Claude Code/Codex CLI — every
+   tailoring pass is a cloud API call with real token cost and resume/job
+   data leaving the machine. This repo's Ollama-only design (§3.3, §5.4)
+   means every run is free and local after one-time setup. For someone
+   tailoring dozens of applications, that's not cosmetic.
+3. **A verified, compiled, single-page PDF, not a markdown draft.** The
+   two-pass `pdflatex` + mandatory one-page check (§5.6, §12.1) produces
+   the actual submittable artifact, verified, not text the user still has
+   to turn into a real document.
+4. **A deliberately narrow, real niche** — small/mid-size companies the
+   big pedigree-driven lists skip (§15) — over volume-maximizing discovery.
+   Matches the user's own stated goal (screening quality over application
+   count), which most popular repos optimize the opposite direction of
+   (more boards, more auto-applies).
+5. **It's the user's own** — full understanding, full control, and a live
+   vehicle for real infra reps (Redis already; see [[student-portfolio-infra-reps]]-adjacent
+   motivation in §14.4) that adopting someone else's repo can't provide.
+   Real, but personal-value, not a claim about the tool being objectively
+   better for a hypothetical other user — this project has exactly one
+   user by design (§13.2's "one user, one resume").
+
+**What NOT to chase, named explicitly because it's what's popular right
+now:** `ApplyPilot`-style full autonomy (auto-submit, no human review) and
+`ai-job-search`'s more agent-autonomous posture. Popular is not the same
+as right for this project — §14.1 already deliberately rejected removing
+the manual review click, and differentiator #1 above is directly in
+tension with "let an agent submit applications for you." Chasing that
+trend would trade away the one property that actually makes this project
+worth using over the popular alternatives.
+
+**Recommendation on what to build next, given the above (my judgment,
+not yet asked for by the user as a specific spec):**
+
+1. **A single unified local digest** combining `discovered_jobs_report.html`,
+   `applications_report.html`, and the CLI-only `email_tracker.py pending`
+   output into one HTML report. All three already read from independent
+   JSONL logs with no shared rendering — this is a presentation-layer
+   change, zero new safety surface, and directly serves the user's own
+   stated belief that the all-in-one nature of this tool (tailor + tracker
+   + discovery + email suggestions, one shared fit-score model) is a real
+   strength worth leaning into rather than three disconnected reports that
+   happen to live in the same repo. Highest leverage-to-risk ratio of
+   anything on this list; use the `dataviz` skill for an actual funnel/
+   trend chart instead of another plain table.
+2. **A quality-review pass on top of the existing truth-review pass** —
+   after edits/letters pass grounding validation, a second local-model
+   pass flags weak/generic phrasing (passive voice, unquantified claims,
+   cliché phrases) for the human to see alongside the existing traceability
+   flags. Never auto-applied — extends the review screen, doesn't bypass
+   it. This is the highest strategic bet: it's the one idea that makes the
+   tailored output itself better, and it reinforces differentiator #1
+   (a second layer of rigor) instead of trading it away for automation,
+   unlike the trend the popular repos are chasing.
+
+Neither is spec'd yet — flagging both for the user to greenlight before
+writing a `CODEX_TASK_*.md`, consistent with how every other feature on
+this roadmap got adopted before being spec'd (§13.1, §15).
+
+**Adopted 2026-08-02, same day** — user said to use my own judgment and
+stop asking permission on incremental calls like this one. Both specced:
+
+1. `CODEX_TASK_unified_digest.md` — `backend/app/digest.py`, combines
+   `tracker.read_applications()`, `discovery.read_postings()`, and
+   `email_tracker.pending_suggestions()` into one `output/digest_report.html`.
+   Deliberately minimal charting (single-hue CSS bar rows, no JS, no
+   palette to validate) rather than the dataviz skill's full interactive
+   procedure — reasoning for that scope cut is in the spec's own "Why"
+   section; loaded the skill before writing this to make sure the cut was
+   a considered exception (single-series-by-position needs no legend/hover/
+   palette-validation per the skill's own rules) rather than skipping it.
+2. `CODEX_TASK_quality_review_pass.md` — a second, quality-only LLM pass
+   (`llm.review_edit_quality`/`review_letter_quality`) alongside the
+   existing truth-only validation, surfaced as a new non-blocking
+   `quality_notes` field reusing the popup's existing `.warning` styling.
+   Hard constraint written into the spec: this can only ever add a visible
+   suggestion, never change what's selectable or compilable — extends
+   §5.3's human-in-the-loop screen, doesn't touch it.
+
+Ordered digest first (smaller, zero new model-call surface, pure
+presentation of data that already exists) then quality-review (larger,
+new LLM call sites in both background-job functions, extension rendering
+changes).

@@ -93,7 +93,9 @@ def read_suggestions() -> list[dict]:
         if kind == "suggested":
             if suggestion_id not in suggestions:
                 order.append(suggestion_id)
-            suggestions[suggestion_id] = {**event, "resolution": "pending"}
+                suggestions[suggestion_id] = {**event, "resolution": "pending"}
+            elif suggestions[suggestion_id].get("resolution") == "pending":
+                suggestions[suggestion_id] = {**event, "resolution": "pending"}
         elif kind in {"confirmed", "dismissed"} and suggestion_id in suggestions:
             suggestions[suggestion_id]["resolution"] = kind
             suggestions[suggestion_id]["resolved_at"] = event.get("at", "")
@@ -220,13 +222,13 @@ def _find_matching_application(
     applications: list[dict],
 ) -> dict | None:
     haystack = f"{sender} {subject} {body}".lower()
-    candidates = [
-        application
-        for application in applications
-        if application.get("event") == "compiled"
-        and application.get("company")
-        and str(application["company"]).lower() in haystack
-    ]
+    candidates = []
+    for application in applications:
+        company = str(application.get("company") or "").strip().lower()
+        if application.get("event") != "compiled" or not company:
+            continue
+        if re.search(rf"(?<!\w){re.escape(company)}(?!\w)", haystack):
+            candidates.append(application)
     if not candidates:
         return None
     return max(candidates, key=lambda application: str(application.get("at", "")))

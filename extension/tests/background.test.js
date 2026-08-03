@@ -10,6 +10,8 @@ const alarmOperations = [];
 let download;
 let createdBlob;
 const revoked = [];
+let toolbarBadgeText = "";
+let toolbarBadgeColor = "";
 
 class FirefoxURL extends URL {
   static createObjectURL(blob) {
@@ -68,6 +70,10 @@ function createWorker(fetchImpl) {
       },
       async create(name, options) { alarmOperations.push({ action: "create", name, options }); },
       async clear(name) { alarmOperations.push({ action: "clear", name }); return true; }
+    },
+    action: {
+      async setBadgeBackgroundColor({ color }) { toolbarBadgeColor = color; },
+      async setBadgeText({ text }) { toolbarBadgeText = text; }
     },
     downloads: {
       onChanged: {
@@ -261,11 +267,70 @@ async function testLetterUsesSharedPdfDownloadLifecycle() {
   assert.equal(revoked.length, before + 1);
 }
 
+async function testDiscoveryListStatusAndBadgeLifecycle() {
+  toolbarBadgeText = "";
+  toolbarBadgeColor = "";
+  let listingCalls = 0;
+  const worker = createWorker(async (url, options = {}) => {
+    if (url.endsWith("/discovery/postings")) {
+      listingCalls += 1;
+      assert.equal(options.headers["X-Extension-Secret"], "test-secret");
+      const postings = listingCalls === 1
+        ? [
+            { id: "one", status: "" },
+            { id: "two", status: "" },
+            { id: "three", status: "dismissed" }
+          ]
+        : listingCalls === 2 ? [
+            { id: "one", status: "dismissed" },
+            { id: "two", status: "" },
+            { id: "three", status: "dismissed" }
+          ] : [
+            { id: "one", status: "dismissed" },
+            { id: "two", status: "tailored" }
+          ];
+      return { ok: true, status: 200, async json() { return { postings }; } };
+    }
+    assert.equal(url, "http://127.0.0.1:8765/discovery/status");
+    assert.equal(options.method, "POST");
+    assert.deepEqual(JSON.parse(options.body), { id: "one", status: "dismissed" });
+    return { ok: true, status: 200, async json() { return { ok: true }; } };
+  });
+
+  const listed = await worker.sendMessage({
+    type: "LIST_DISCOVERED_JOBS",
+    backendUrl: "http://127.0.0.1:8765",
+    sharedSecret: "test-secret"
+  });
+  assert.equal(listed.ok, true);
+  assert.equal(listed.postings.length, 3);
+  assert.equal(sharedStorage.backendUrl, "http://127.0.0.1:8765");
+  assert.equal(sharedStorage.sharedSecret, "test-secret");
+  assert.equal(toolbarBadgeColor, "#176c49");
+  assert.equal(toolbarBadgeText, "2");
+
+  const updated = await worker.sendMessage({
+    type: "SET_DISCOVERY_STATUS",
+    backendUrl: "http://127.0.0.1:8765",
+    sharedSecret: "test-secret",
+    id: "one",
+    status: "dismissed"
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(updated)), { ok: true });
+  assert.equal(listingCalls, 2);
+  assert.equal(toolbarBadgeText, "1");
+
+  await worker.alarmListener({ name: "discovery-badge-refresh" });
+  assert.equal(listingCalls, 3);
+  assert.equal(toolbarBadgeText, "");
+}
+
 async function main() {
   await testPdfDownload();
   await testTailorPollingSurvivesWorkerRestart();
   await testLetterPollingSurvivesWorkerRestart();
   await testLetterUsesSharedPdfDownloadLifecycle();
+  await testDiscoveryListStatusAndBadgeLifecycle();
   process.stdout.write(
     "Firefox shared PDF downloads and durable tailor/letter polling survive background-worker restart\n"
   );
