@@ -5,13 +5,37 @@ from pydantic import BaseModel, Field, model_validator
 
 class Company(BaseModel):
     name: str = Field(min_length=1, max_length=160)
-    platform: Literal["greenhouse"]
+    platform: Literal["greenhouse", "lever", "ashby"]
     slug: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z0-9-]+$")
 
 
 class CompaniesConfig(BaseModel):
     title_keywords: list[str] = Field(default_factory=list, max_length=50)
     companies: list[Company] = Field(default_factory=list, max_length=200)
+
+
+class DiscoveredPosting(BaseModel):
+    id: str
+    company: str
+    role: str
+    location: str
+    url: str
+    platform: str
+    status: str = ""
+    fit_score: int | None = None
+
+
+class DiscoveryListResponse(BaseModel):
+    postings: list[DiscoveredPosting] = Field(default_factory=list)
+
+
+class DiscoveryStatusRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=200)
+    status: Literal["dismissed", "tailored"]
+
+
+class EmailClassificationResponse(BaseModel):
+    status: Literal["screen", "interview", "offer", "rejected", "unrelated"]
 
 
 class Keyword(BaseModel):

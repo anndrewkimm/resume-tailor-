@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import ValidationError
 
-from . import config, tracker
+from . import config, discovery, tracker
 from .fit import compute_fit
 from .jobs import create_job, get_job, update_job
 from .letter import LetterValidationError, render_letter_tex, validate_letter_paragraph
@@ -18,6 +18,9 @@ from .models import (
     CompileCoverLetterRequest,
     CompileRequest,
     CoverLetterStatusResponse,
+    DiscoveredPosting,
+    DiscoveryListResponse,
+    DiscoveryStatusRequest,
     ExtractKeywordsRequest,
     ExtractKeywordsResponse,
     GenerateDiffRequest,
@@ -185,6 +188,42 @@ def tailor_status(
         fit=job.fit,
         error=job.error,
     )
+
+
+@app.get("/discovery/postings", response_model=DiscoveryListResponse)
+def discovery_postings(
+    _: None = Depends(require_extension_origin),
+) -> DiscoveryListResponse:
+    postings = sorted(
+        discovery.read_postings(),
+        key=lambda item: str(item.get("at", "")),
+        reverse=True,
+    )
+    return DiscoveryListResponse(
+        postings=[
+            DiscoveredPosting(
+                id=str(item["id"]),
+                company=str(item.get("company", "")),
+                role=str(item.get("role", "")),
+                location=str(item.get("location", "")),
+                url=str(item.get("url", "")),
+                platform=str(item.get("platform", "")),
+                status=str(item.get("status") or ""),
+                fit_score=item.get("fit_score"),
+            )
+            for item in postings
+        ]
+    )
+
+
+@app.post("/discovery/status")
+def discovery_set_status(
+    req: DiscoveryStatusRequest, _: None = Depends(require_extension_origin)
+) -> dict:
+    if not any(str(posting["id"]) == req.id for posting in discovery.read_postings()):
+        raise HTTPException(status_code=404, detail="unknown discovery posting id")
+    discovery.record_status(req.id, req.status)
+    return {"ok": True}
 
 
 @app.post("/cover-letter/start", response_model=StartTailorResponse)

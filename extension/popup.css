@@ -49,3 +49,8 @@ summary { cursor:pointer; font-weight:700; }
 .error { background:#f8e5e3; color:#7e2520; white-space:pre-wrap; }
 .success { background:#e4efe5; }
 .success .secondary { width:100%; }
+.badge { margin-left:6px; padding:1px 6px; border-radius:99px; background:var(--green); color:white; font-size:11px; font-weight:800; }
+.discovered-row { margin:10px 0; padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:var(--card); }
+.discovered-row a { display:block; font-weight:800; color:var(--ink); text-decoration:none; }
+.discovered-actions { display:flex; gap:8px; margin-top:8px; }
+.discovered-actions button { padding:6px 10px; font-size:12px; }

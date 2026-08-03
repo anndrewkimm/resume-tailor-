@@ -60,10 +60,93 @@ def fetch_greenhouse_jobs(slug: str) -> list[dict]:
     return jobs
 
 
+def fetch_lever_jobs(slug: str) -> list[dict]:
+    url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(url)
+        response.raise_for_status()
+    jobs = response.json()
+    if not isinstance(jobs, list):
+        raise ValueError("Lever response was not a list of postings")
+    if not all(isinstance(job, dict) for job in jobs):
+        raise ValueError("Lever postings array contained a non-object item")
+    return jobs
+
+
+def fetch_ashby_jobs(slug: str) -> list[dict]:
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(url)
+        response.raise_for_status()
+    payload = response.json()
+    jobs = payload.get("jobs") if isinstance(payload, dict) else None
+    if not isinstance(jobs, list):
+        raise ValueError("Ashby response did not contain a jobs array")
+    if not all(isinstance(job, dict) for job in jobs):
+        raise ValueError("Ashby jobs array contained a non-object item")
+    return jobs
+
+
+def _clean_text(text: str) -> str:
+    return " ".join(text.split())[: config.MAX_JOB_TEXT_CHARS]
+
+
 def _strip_html(content: str) -> str:
     unescaped = html.unescape(content)
     without_tags = re.sub(r"<[^>]+>", " ", unescaped)
-    return " ".join(without_tags.split())[: config.MAX_JOB_TEXT_CHARS]
+    return _clean_text(without_tags)
+
+
+def _normalize_greenhouse_job(job: dict) -> dict:
+    location_value = job.get("location", {})
+    location = (
+        str(location_value.get("name", "")) if isinstance(location_value, dict) else ""
+    )
+    return {
+        "external_id": job["id"],
+        "title": str(job["title"]).strip(),
+        "url": str(job["absolute_url"]),
+        "location": location,
+        "description": _strip_html(str(job.get("content") or "")),
+    }
+
+
+def _normalize_lever_job(job: dict) -> dict:
+    categories = job.get("categories", {})
+    location = (
+        str(categories.get("location", "")) if isinstance(categories, dict) else ""
+    )
+    return {
+        "external_id": job["id"],
+        "title": str(job["text"]).strip(),
+        "url": str(job["hostedUrl"]),
+        "location": location,
+        "description": _clean_text(str(job.get("descriptionPlain") or "")),
+    }
+
+
+def _normalize_ashby_job(job: dict) -> dict:
+    return {
+        "external_id": job["id"],
+        "title": str(job["title"]).strip(),
+        "url": str(job["jobUrl"]),
+        "location": str(job.get("location", "")),
+        "description": _clean_text(str(job.get("descriptionPlain") or "")),
+    }
+
+
+_FETCHERS = {
+    # Resolve through module globals at call time so tests and local tooling
+    # can replace a fetcher without having to mutate this dispatch table too.
+    "greenhouse": lambda slug: fetch_greenhouse_jobs(slug),
+    "lever": lambda slug: fetch_lever_jobs(slug),
+    "ashby": lambda slug: fetch_ashby_jobs(slug),
+}
+_NORMALIZERS = {
+    "greenhouse": _normalize_greenhouse_job,
+    "lever": _normalize_lever_job,
+    "ashby": _normalize_ashby_job,
+}
 
 
 def record_seen(
@@ -169,37 +252,33 @@ def poll() -> list[dict]:
 
     for index, company in enumerate(companies_config.companies):
         try:
-            jobs = fetch_greenhouse_jobs(company.slug)
+            jobs = _FETCHERS[company.platform](company.slug)
         except Exception as exc:
             print(f"warning: could not poll {company.name} ({company.slug}): {exc}", file=sys.stderr)
             jobs = []
 
+        normalize = _NORMALIZERS[company.platform]
         for job in jobs:
             try:
-                external_id = job["id"]
-                title = str(job["title"])
-                url = str(job["absolute_url"])
-                location_value = job.get("location", {})
-                location = (
-                    str(location_value.get("name", "")) if isinstance(location_value, dict) else ""
-                )
+                normalized = normalize(job)
             except (KeyError, TypeError, ValueError) as exc:
                 print(f"warning: skipped malformed job from {company.name}: {exc}", file=sys.stderr)
                 continue
 
+            title = normalized["title"]
             if not _title_matches(title, companies_config.title_keywords):
                 continue
-            posting_id = f"{company.slug}:{external_id}"
+            posting_id = f"{company.slug}:{normalized['external_id']}"
             if posting_id in known_ids:
                 continue
             record_seen(
                 id=posting_id,
                 company=company.name,
                 role=title,
-                location=location,
-                url=url,
+                location=normalized["location"],
+                url=normalized["url"],
                 platform=company.platform,
-                description=_strip_html(str(job.get("content") or "")),
+                description=normalized["description"],
             )
             known_ids.add(posting_id)
             new_ids.append(posting_id)

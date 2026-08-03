@@ -13,6 +13,15 @@ RESUME_CLS_PATH = Path(os.environ.get("RESUME_CLS_PATH", REPO_ROOT / "resume.cls
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", REPO_ROOT / "output"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", REPO_ROOT / "data"))
 COMPANIES_PATH = Path(os.environ.get("COMPANIES_PATH", REPO_ROOT / "companies.json"))
+GMAIL_CLIENT_SECRET_PATH = Path(
+    os.environ.get(
+        "GMAIL_CLIENT_SECRET_PATH",
+        REPO_ROOT / "backend" / ".gmail_client_secret.json",
+    )
+)
+GMAIL_TOKEN_PATH = Path(
+    os.environ.get("GMAIL_TOKEN_PATH", REPO_ROOT / "backend" / ".gmail_token.json")
+)
 
 # Extension origin allowlist (see PLAN.md 3.2) — set the real extension ID
 # once it's loaded unpacked in Chrome (chrome://extensions, dev mode on).
@@ -22,6 +31,9 @@ SHARED_SECRET = os.environ.get("SHARED_SECRET", "")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 OLLAMA_TIMEOUT_SECONDS = float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "300"))
+
+REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+JOB_STATE_TTL_SECONDS = int(os.environ.get("JOB_STATE_TTL_SECONDS", "3600"))
 
 PDFLATEX_TIMEOUT_SECONDS = int(os.environ.get("PDFLATEX_TIMEOUT_SECONDS", "60"))
 MAX_JOB_TEXT_CHARS = int(os.environ.get("MAX_JOB_TEXT_CHARS", "100000"))

@@ -16,6 +16,13 @@ services:
     environment:
       CONFIG_REPO_ROOT: /config
       OLLAMA_MODEL: qwen2.5:7b-instruct
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
 
 volumes:
   ollama-models:

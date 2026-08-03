@@ -1,11 +1,11 @@
 const $ = (selector) => document.querySelector(selector);
 const ext = globalThis.browser ?? globalThis.chrome;
 const localConfig = globalThis.RESUME_TAILOR_LOCAL ?? {};
-const state = { analysis: null, edits: [], paragraphs: [] };
+const state = { analysis: null, edits: [], paragraphs: [], discovered: [] };
 
 function show(id) { $(id).classList.remove("hidden"); }
 function hide(id) { $(id).classList.add("hidden"); }
-function hideViews() { ["#intro", "#progress", "#results", "#letter", "#done"].forEach(hide); }
+function hideViews() { ["#intro", "#progress", "#results", "#letter", "#discovered", "#done"].forEach(hide); }
 function setProgress(message) { hideViews(); $("#progress-text").textContent = message; show("#progress"); }
 function showError(message) { $("#error").textContent = message; show("#error"); hide("#progress"); }
 function clearError() { hide("#error"); $("#error").textContent = ""; }
@@ -22,6 +22,67 @@ async function activeTabId() {
   const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/^https?:/.test(tab.url || "")) throw new Error("Open a regular http(s) job posting tab first.");
   return tab.id;
+}
+
+function renderDiscoveredList() {
+  const hideHandled = $("#discovered-hide-handled").checked;
+  const rows = state.discovered.filter((posting) => !hideHandled || !posting.status);
+  $("#discovered-list").replaceChildren(...rows.map((posting) => {
+    const row = document.createElement("article");
+    row.className = "discovered-row";
+    const link = document.createElement("a");
+    link.href = posting.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = `${posting.company} â€” ${posting.role}`;
+    const meta = document.createElement("p");
+    meta.className = "note";
+    const fit = posting.fit_score === null || posting.fit_score === undefined
+      ? "unscored"
+      : `fit ${posting.fit_score}%`;
+    meta.textContent = `${posting.location || "â€”"} Â· ${fit} Â· ${posting.status || "new"}`;
+    const actions = document.createElement("div");
+    actions.className = "discovered-actions";
+    for (const [label, status] of [["Dismiss", "dismissed"], ["Mark tailored", "tailored"]]) {
+      const button = document.createElement("button");
+      button.className = "secondary";
+      button.textContent = label;
+      button.disabled = posting.status === status;
+      button.addEventListener("click", async () => {
+        const config = await settings();
+        const result = await ext.runtime.sendMessage({
+          type: "SET_DISCOVERY_STATUS",
+          id: posting.id,
+          status,
+          ...config
+        });
+        if (!result?.ok) {
+          showError(result?.error || "Could not update this posting.");
+          return;
+        }
+        await showDiscovered();
+      });
+      actions.append(button);
+    }
+    row.append(link, meta, actions);
+    return row;
+  }));
+}
+
+async function showDiscovered() {
+  clearError();
+  hideViews();
+  show("#discovered");
+  $("#discovered-list").textContent = "Loadingâ€¦";
+  try {
+    const config = await settings();
+    const result = await ext.runtime.sendMessage({ type: "LIST_DISCOVERED_JOBS", ...config });
+    if (!result?.ok) throw new Error(result?.error || "Could not load discovered postings.");
+    state.discovered = result.postings || [];
+    renderDiscoveredList();
+  } catch (error) {
+    showError(error.message);
+  }
 }
 
 function renderFitAndKeywords() {
@@ -303,6 +364,10 @@ async function resetTailor() {
 }
 
 $("#tailor").addEventListener("click", tailor);
+$("#view-discovered").addEventListener("click", showDiscovered);
+$("#discovered-refresh").addEventListener("click", showDiscovered);
+$("#discovered-hide-handled").addEventListener("change", renderDiscoveredList);
+$("#discovered-back").addEventListener("click", () => { hideViews(); show("#intro"); });
 $("#compile").addEventListener("click", compileResume);
 $("#draft-letter").addEventListener("click", draftLetter);
 $("#compile-letter").addEventListener("click", compileLetter);
@@ -321,6 +386,11 @@ $("#save-settings").addEventListener("click", async () => {
 });
 
 settings().then((config) => { $("#backend-url").value = config.backendUrl; $("#shared-secret").value = config.sharedSecret; });
+ext.action.getBadgeText({}).then((badgeText) => {
+  if (!badgeText) return;
+  $("#discovered-badge").textContent = badgeText;
+  $("#discovered-badge").classList.remove("hidden");
+});
 ext.storage.local.get(["tailorResult", "activeJobId", "letterResult", "activeLetterJobId"]).then((stored) => {
   if (stored.tailorResult) applyTailorState(stored.tailorResult);
   else if (stored.activeJobId) setProgress("Waiting for the backend…");

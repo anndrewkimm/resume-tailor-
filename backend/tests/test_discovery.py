@@ -92,7 +92,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(loaded.companies[0].slug, "example-co")
 
     def test_load_companies_config_rejects_unknown_platform(self):
-        self.write_companies([{"name": "Example Co", "platform": "lever", "slug": "example"}])
+        self.write_companies([{"name": "Example Co", "platform": "workable", "slug": "example"}])
         with self.assertRaisesRegex(ValidationError, "platform"):
             discovery.load_companies_config()
 
@@ -119,6 +119,72 @@ class DiscoveryTests(unittest.TestCase):
             "https://boards-api.greenhouse.io/v1/boards/example/jobs?content=true"
         )
         client_class.assert_called_once_with(timeout=10.0)
+
+    @patch("backend.app.discovery.httpx.Client")
+    def test_fetch_lever_jobs_uses_expected_endpoint_and_shape(self, client_class):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = [{"id": "lever-101"}]
+        client = client_class.return_value.__enter__.return_value
+        client.get.return_value = response
+
+        jobs = discovery.fetch_lever_jobs("example")
+
+        self.assertEqual(jobs[0]["id"], "lever-101")
+        client.get.assert_called_once_with(
+            "https://api.lever.co/v0/postings/example?mode=json"
+        )
+        response.json.return_value = {"postings": []}
+        with self.assertRaisesRegex(ValueError, "not a list"):
+            discovery.fetch_lever_jobs("example")
+
+    @patch("backend.app.discovery.httpx.Client")
+    def test_fetch_ashby_jobs_uses_expected_endpoint_and_shape(self, client_class):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"jobs": [{"id": "ashby-101"}]}
+        client = client_class.return_value.__enter__.return_value
+        client.get.return_value = response
+
+        jobs = discovery.fetch_ashby_jobs("example")
+
+        self.assertEqual(jobs[0]["id"], "ashby-101")
+        client.get.assert_called_once_with(
+            "https://api.ashbyhq.com/posting-api/job-board/example"
+        )
+        response.json.return_value = {"results": []}
+        with self.assertRaisesRegex(ValueError, "jobs array"):
+            discovery.fetch_ashby_jobs("example")
+
+    def test_normalize_lever_job_uses_plain_description(self):
+        normalized = discovery._normalize_lever_job(
+            {
+                "id": "lever-101",
+                "text": " Software Engineer ",
+                "hostedUrl": "https://jobs.lever.co/example/lever-101",
+                "categories": {"location": "Remote"},
+                "descriptionPlain": "Build APIs.\n\nWork with Python.",
+            }
+        )
+
+        self.assertEqual(normalized["title"], "Software Engineer")
+        self.assertEqual(normalized["location"], "Remote")
+        self.assertEqual(normalized["description"], "Build APIs. Work with Python.")
+
+    def test_normalize_ashby_job_strips_real_world_title_whitespace(self):
+        normalized = discovery._normalize_ashby_job(
+            {
+                "id": "ashby-101",
+                "title": " Security Engineer, Cloud",
+                "jobUrl": "https://jobs.ashbyhq.com/example/ashby-101",
+                "location": "New York",
+                "descriptionPlain": "Secure cloud infrastructure.",
+            }
+        )
+
+        self.assertEqual(normalized["title"], "Security Engineer, Cloud")
+        self.assertEqual(normalized["location"], "New York")
+        self.assertEqual(normalized["description"], "Secure cloud infrastructure.")
 
     def test_strip_html_unescapes_before_removing_tags_and_caps_length(self):
         self.assertEqual(discovery._strip_html(ENCODED_CONTENT), "Build APIs & tools.")
@@ -170,6 +236,54 @@ class DiscoveryTests(unittest.TestCase):
         lines = (config.DATA_DIR / "discovered_jobs.jsonl").read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 1)
         self.assertEqual(discovery.read_postings()[0]["description"], "Build APIs & tools.")
+
+    @patch("backend.app.discovery.time.sleep")
+    @patch("backend.app.discovery.fetch_ashby_jobs")
+    @patch("backend.app.discovery.fetch_lever_jobs")
+    @patch("backend.app.discovery.fetch_greenhouse_jobs")
+    def test_poll_mixes_all_supported_platforms(
+        self, fetch_greenhouse, fetch_lever, fetch_ashby, sleep
+    ):
+        self.write_companies(
+            [
+                {"name": "Green Co", "platform": "greenhouse", "slug": "green"},
+                {"name": "Lever Co", "platform": "lever", "slug": "lever"},
+                {"name": "Ashby Co", "platform": "ashby", "slug": "ashby"},
+            ],
+            ["engineer"],
+        )
+        fetch_greenhouse.return_value = [greenhouse_job(101, "Software Engineer")]
+        fetch_lever.return_value = [
+            {
+                "id": "lever-202",
+                "text": "Platform Engineer",
+                "hostedUrl": "https://jobs.lever.co/lever/lever-202",
+                "categories": {"location": "Remote"},
+                "descriptionPlain": "Lever plain text",
+            }
+        ]
+        fetch_ashby.return_value = [
+            {
+                "id": "ashby-303",
+                "title": " Infrastructure Engineer ",
+                "jobUrl": "https://jobs.ashbyhq.com/ashby/ashby-303",
+                "location": "Chicago",
+                "descriptionPlain": "Ashby plain text",
+            }
+        ]
+
+        postings = discovery.poll()
+
+        self.assertEqual(
+            [posting["platform"] for posting in postings],
+            ["greenhouse", "lever", "ashby"],
+        )
+        self.assertEqual(
+            [posting["description"] for posting in postings],
+            ["Build APIs & tools.", "Lever plain text", "Ashby plain text"],
+        )
+        self.assertEqual(postings[2]["role"], "Infrastructure Engineer")
+        self.assertEqual(sleep.call_count, 2)
 
     @patch("backend.app.discovery.time.sleep")
     @patch("backend.app.discovery.fetch_greenhouse_jobs")

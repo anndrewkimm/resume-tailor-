@@ -3,3 +3,8 @@ uvicorn[standard]
 httpx
 pydantic
 python-dotenv
+redis
+fakeredis
+google-auth
+google-auth-oauthlib
+google-api-python-client

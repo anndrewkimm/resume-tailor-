@@ -32,6 +32,44 @@ async function callApi(backendUrl, sharedSecret, path, body) {
   return response.json();
 }
 
+async function fetchApi(backendUrl, sharedSecret, path) {
+  const response = await fetch(`${backendUrl}${path}`, {
+    headers: { "X-Extension-Secret": sharedSecret || "" }
+  });
+  if (!response.ok) {
+    let detail = `Backend returned ${response.status}`;
+    try {
+      const payload = await response.json();
+      detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail, null, 2);
+    } catch {}
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+async function listDiscoveredPostings({ backendUrl, sharedSecret }) {
+  const url = localBackendUrl(backendUrl);
+  return fetchApi(url, sharedSecret, "/discovery/postings");
+}
+
+async function setDiscoveryStatus({ backendUrl, sharedSecret, id, status }) {
+  const url = localBackendUrl(backendUrl);
+  return callApi(url, sharedSecret, "/discovery/status", { id, status });
+}
+
+async function refreshDiscoveryBadge() {
+  const stored = await ext.storage.local.get(["backendUrl", "sharedSecret"]);
+  if (!stored.backendUrl) return;
+  try {
+    const { postings } = await listDiscoveredPostings(stored);
+    const newCount = postings.filter((posting) => !posting.status).length;
+    await ext.action.setBadgeBackgroundColor({ color: "#176c49" });
+    await ext.action.setBadgeText({ text: newCount > 0 ? String(newCount) : "" });
+  } catch {
+    // Backend down/unreachable is routine. Keep the last known badge.
+  }
+}
+
 async function startTailor({ tabId, backendUrl, sharedSecret }) {
   const url = localBackendUrl(backendUrl);
   await ext.storage.local.remove(["tailorResult", "activeJobId", "letterResult", "activeLetterJobId"]);
@@ -126,8 +164,14 @@ ext.alarms.onAlarm.addListener(async (alarm) => {
       resultKey: "letterResult",
       statusPath: "/cover-letter/status"
     });
+  } else if (alarm.name === "discovery-badge-refresh") {
+    await refreshDiscoveryBadge();
   }
 });
+
+ext.alarms.create("discovery-badge-refresh", { periodInMinutes: 30 });
+ext.runtime.onStartup?.addListener(refreshDiscoveryBadge);
+ext.runtime.onInstalled?.addListener(refreshDiscoveryBadge);
 
 const activeBlobUrls = new Map();
 
@@ -226,6 +270,19 @@ ext.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === "START_COVER_LETTER") {
     startCoverLetter(message)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message?.type === "LIST_DISCOVERED_JOBS") {
+    listDiscoveredPostings(message)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message?.type === "SET_DISCOVERY_STATUS") {
+    setDiscoveryStatus(message)
+      .then(() => refreshDiscoveryBadge())
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;

@@ -1,4 +1,6 @@
 backend/.env
+backend/.gmail_client_secret.json
+backend/.gmail_token.json
 extension/config.local.js
 __pycache__/
 *.py[cod]

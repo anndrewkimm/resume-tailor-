@@ -26,6 +26,7 @@
     <div id="intro">
       <p>Open one job posting, then generate small, reviewable edits grounded in your base resume.</p>
       <button id="tailor" class="primary">Tailor this resume</button>
+      <button id="view-discovered" class="secondary action-button">Discovered jobs<span id="discovered-badge" class="badge hidden"></span></button>
     </div>
 
     <section id="progress" class="hidden" aria-live="polite">
@@ -64,6 +65,16 @@
       </label>
       <button id="compile-letter" class="primary">Compile letter</button>
       <button id="back-to-results" class="secondary action-button">Back to resume review</button>
+    </section>
+
+    <section id="discovered" class="hidden">
+      <p class="eyebrow">FROM LOCAL ATS POLLING</p>
+      <h2>Discovered jobs</h2>
+      <p class="note">Run <code>python -m backend.app.discovery poll</code> and <code>score</code> from a terminal to add more. Opening a posting only opens the tab â€” use "Tailor this resume" there as usual.</p>
+      <label class="confirm"><input id="discovered-hide-handled" type="checkbox" checked><span>Hide dismissed/tailored</span></label>
+      <div id="discovered-list"></div>
+      <button id="discovered-refresh" class="secondary">Refresh</button>
+      <button id="discovered-back" class="secondary reset-results">Back</button>
     </section>
 
     <section id="done" class="hidden success" aria-live="polite">

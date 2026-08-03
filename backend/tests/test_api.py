@@ -5,9 +5,10 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import fakeredis
 from fastapi.testclient import TestClient
 
-from backend.app import config
+from backend.app import config, discovery, jobs
 from backend.app.latex_compile import CompileResult
 from backend.app.main import app
 from backend.app.models import (
@@ -30,6 +31,13 @@ class ApiTests(unittest.TestCase):
         config.SHARED_SECRET = "test-secret"
         config.OUTPUT_DIR = Path(self.output_tempdir.name)
         config.DATA_DIR = Path(self.data_tempdir.name)
+        self.jobs_client_patcher = patch.object(
+            jobs,
+            "_client",
+            return_value=fakeredis.FakeRedis(decode_responses=True),
+        )
+        self.jobs_client_patcher.start()
+        self.addCleanup(self.jobs_client_patcher.stop)
         self.client = TestClient(app)
         self.headers = {"X-Extension-Secret": "test-secret"}
 
@@ -51,6 +59,85 @@ class ApiTests(unittest.TestCase):
     def test_protected_endpoint_rejects_bad_secret(self):
         response = self.client.post("/compile", json={})
         self.assertEqual(response.status_code, 403)
+
+    def test_discovery_endpoints_require_extension_secret(self):
+        responses = (
+            self.client.get("/discovery/postings"),
+            self.client.post(
+                "/discovery/status",
+                json={"id": "posting-1", "status": "dismissed"},
+            ),
+        )
+        for response in responses:
+            with self.subTest(path=response.request.url.path):
+                self.assertEqual(response.status_code, 403)
+
+    def test_discovery_postings_returns_empty_list_without_event_log(self):
+        response = self.client.get("/discovery/postings", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"postings": []})
+
+    def test_discovery_postings_returns_newest_first(self):
+        with patch(
+            "backend.app.discovery._timestamp",
+            side_effect=["2026-08-01T00:00:00+00:00", "2026-08-02T00:00:00+00:00"],
+        ):
+            discovery.record_seen(
+                id="example:older",
+                company="Example",
+                role="Software Engineer",
+                location="Remote",
+                url="https://example.com/older",
+                platform="greenhouse",
+                description="Older posting",
+            )
+            discovery.record_seen(
+                id="example:newer",
+                company="Example",
+                role="Platform Engineer",
+                location="New York",
+                url="https://example.com/newer",
+                platform="greenhouse",
+                description="Newer posting",
+            )
+        discovery.record_fit(
+            "example:newer", fit_score=88, keywords_total=10, keywords_matched=8
+        )
+
+        response = self.client.get("/discovery/postings", headers=self.headers)
+
+        self.assertEqual(response.status_code, 200)
+        postings = response.json()["postings"]
+        self.assertEqual([posting["id"] for posting in postings], ["example:newer", "example:older"])
+        self.assertEqual(postings[0]["fit_score"], 88)
+        self.assertEqual(postings[1]["status"], "")
+
+    def test_discovery_status_rejects_unknown_id_and_persists_known_id(self):
+        missing = self.client.post(
+            "/discovery/status",
+            json={"id": "unknown", "status": "dismissed"},
+            headers=self.headers,
+        )
+        self.assertEqual(missing.status_code, 404)
+
+        discovery.record_seen(
+            id="example:known",
+            company="Example",
+            role="Engineer",
+            location="Remote",
+            url="https://example.com/known",
+            platform="greenhouse",
+            description="Posting",
+        )
+        updated = self.client.post(
+            "/discovery/status",
+            json={"id": "example:known", "status": "tailored"},
+            headers=self.headers,
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json(), {"ok": True})
+        self.assertEqual(discovery.read_postings()[0]["status"], "tailored")
 
     def test_firefox_extension_origin_is_allowed_by_cors(self):
         origin = "moz-extension://12345678-1234-1234-1234-123456789abc"
